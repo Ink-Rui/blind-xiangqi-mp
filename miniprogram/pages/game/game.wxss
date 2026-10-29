@@ -38,16 +38,19 @@
 /* ===== 棋子：单面显隐翻牌 ===== */
 .piece {
   position: absolute;
-  width: 63rpx;
-  height: 63rpx;
-  margin-left: -31.5rpx;
-  margin-top: -31.5rpx;
+  width: 88rpx;   /* 触控热区 88rpx ≈ 44pt；视觉尺寸由 .flip 保持 63rpx */
+  height: 88rpx;
+  margin-left: -44rpx;
+  margin-top: -44rpx;
   transition: left .28s ease, top .28s ease;
   z-index: 2;
 }
 .piece .flip {
+  /* 视觉主体 63rpx，居中于放大的热区 */
   position: absolute;
-  left: 0; top: 0; right: 0; bottom: 0;
+  left: 50%; top: 50%;
+  width: 63rpx; height: 63rpx;
+  margin-left: -31.5rpx; margin-top: -31.5rpx;
 }
 .face {
   position: absolute;
@@ -79,7 +82,7 @@
 }
 .piece.incheck .face { animation: pulse 1s infinite; }
 .piece.dying { opacity: 0; transform: scale(.4); transition: all .45s ease; z-index: 1; }
-.piece.lastmv::after {
+.piece.lastmv .flip::after {
   content: "";
   position: absolute;
   left: -14%; top: -14%; right: -14%; bottom: -14%;
@@ -94,8 +97,8 @@
 /* ===== 提示与标记 ===== */
 .hint {
   position: absolute;
-  width: 63rpx; height: 63rpx;
-  margin-left: -31.5rpx; margin-top: -31.5rpx;
+  width: 72rpx; height: 72rpx;   /* 热区略小于格距(~71.9rpx)，避免误抢相邻棋子 */
+  margin-left: -36rpx; margin-top: -36rpx;
   z-index: 3;
   display: flex;
   align-items: center;
@@ -108,6 +111,8 @@
   background: rgba(181, 56, 46, .4);
 }
 .hint.cap::before { width: 54rpx; height: 54rpx; background: none; border: 5rpx solid rgba(181, 56, 46, .65); box-sizing: border-box; }
+/* 吃子提示压在对方棋子上，热区与棋子对齐 88rpx */
+.hint.cap { width: 88rpx; height: 88rpx; margin-left: -44rpx; margin-top: -44rpx; }
 .mark {
   position: absolute;
   width: 63rpx; height: 63rpx;
