@@ -19,19 +19,19 @@
       <view class="board-bg">
         <view class="frame"></view>
         <view wx:for="{{[0,1,2,3,4,5,6,7,8,9]}}" wx:key="*this" class="bl hl"
-          style="top:{{(60 + 100 * item) / 10.8}}%"></view>
-        <view class="bl vl full" style="left:6.25%"></view>
-        <view class="bl vl full" style="left:93.75%"></view>
+          style="top:{{(90 + 100 * item) / 10.8}}%"></view>
+        <view class="bl vl full" style="left:8.33%"></view>
+        <view class="bl vl full" style="left:91.67%"></view>
         <view wx:for="{{[1,2,3,4,5,6,7]}}" wx:key="*this" class="bl vl seg-t"
-          style="left:{{(60 + 100 * item) / 9.6}}%"></view>
+          style="left:{{(80 + 100 * item) / 9.6}}%"></view>
         <view wx:for="{{[1,2,3,4,5,6,7]}}" wx:key="*this" class="bl vl seg-b"
-          style="left:{{(60 + 100 * item) / 9.6}}%"></view>
-        <view class="bl diag" style="left:47.92%;top:14.81%;transform:translate(-50%,-50%) rotate(45deg)"></view>
-        <view class="bl diag" style="left:47.92%;top:14.81%;transform:translate(-50%,-50%) rotate(-45deg)"></view>
-        <view class="bl diag" style="left:47.92%;top:79.63%;transform:translate(-50%,-50%) rotate(45deg)"></view>
-        <view class="bl diag" style="left:47.92%;top:79.63%;transform:translate(-50%,-50%) rotate(-45deg)"></view>
-        <view class="river-t" style="left:28.13%">楚 河</view>
-        <view class="river-t" style="left:71.88%">汉 界</view>
+          style="left:{{(80 + 100 * item) / 9.6}}%"></view>
+        <view class="bl diag" style="left:50%;top:17.59%;transform:translate(-50%,-50%) rotate(45deg)"></view>
+        <view class="bl diag" style="left:50%;top:17.59%;transform:translate(-50%,-50%) rotate(-45deg)"></view>
+        <view class="bl diag" style="left:50%;top:82.41%;transform:translate(-50%,-50%) rotate(45deg)"></view>
+        <view class="bl diag" style="left:50%;top:82.41%;transform:translate(-50%,-50%) rotate(-45deg)"></view>
+        <view class="river-t" style="left:29.17%">楚 河</view>
+        <view class="river-t" style="left:70.83%">汉 界</view>
       </view>
       <!-- 上一步落点标记 -->
       <view class="layer">

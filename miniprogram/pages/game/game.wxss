@@ -16,19 +16,19 @@
   overflow: hidden;
 }
 .bl { position: absolute; background: #8a6f52; }
-.hl { left: 6.25%; width: 87.5%; height: 2rpx; margin-top: -1rpx; }
-.vl { top: 5.56%; width: 2rpx; margin-left: -1rpx; }
+.hl { left: 8.33%; width: 83.34%; height: 2rpx; margin-top: -1rpx; }
+.vl { top: 8.33%; width: 2rpx; margin-left: -1rpx; }
 .vl.full { height: 83.34%; }
 .vl.seg-t { height: 37.04%; }
-.vl.seg-b { top: 51.85%; height: 37.04%; }
+.vl.seg-b { top: 54.63%; height: 37.04%; }
 .diag { width: 29.46%; height: 2rpx; }
 .frame {
   position: absolute;
-  left: 4.17%; top: 3.7%; width: 91.66%; height: 92.59%;
+  left: 8.33%; top: 8.33%; width: 83.34%; height: 83.34%;
   border: 3rpx solid #8a6f52;
 }
 .river-t {
-  position: absolute; top: 47.22%;
+  position: absolute; top: 50%;
   transform: translate(-50%, -50%);
   font-size: 36rpx; font-weight: 700; letter-spacing: 8rpx;
   color: rgba(138, 111, 82, .55);

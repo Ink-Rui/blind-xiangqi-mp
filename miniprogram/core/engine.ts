@@ -63,9 +63,9 @@ export const SLOTS: Slot[] = (() => {
 export const opp = (s: Side): Side => (s === 'red' ? 'black' : 'red');
 /** 上 5 行为黑方半盘，下 5 行为红方半盘 */
 export const halfOwner = (pos: Pos): Side => (pos.r <= 4 ? 'black' : 'red');
-/** 行列坐标 → 960×1080 逻辑视图的百分比坐标 */
+/** 行列坐标 → 960×1080 逻辑视图的百分比坐标（格框居中：左右各留 80、上下各留 90） */
 export const PIECE_XY = (r: number, c: number): { x: number; y: number } =>
-  ({ x: ((60 + 100 * c) / 960) * 100, y: ((60 + 100 * r) / 1080) * 100 });
+  ({ x: ((80 + 100 * c) / 960) * 100, y: ((90 + 100 * r) / 1080) * 100 });
 
 function shuffleArr<T>(a: T[]): T[] {
   for (let i = a.length - 1; i > 0; i--) {
