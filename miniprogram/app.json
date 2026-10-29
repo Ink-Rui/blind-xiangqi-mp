@@ -1,0 +1,11 @@
+{
+  "pages": ["pages/index/index", "pages/game/game"],
+  "window": {
+    "navigationBarBackgroundColor": "#f6f1e7",
+    "navigationBarTitleText": "盲下象棋",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#f6f1e7"
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

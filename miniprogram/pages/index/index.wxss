@@ -1,0 +1,31 @@
+.page { padding: 24rpx 28rpx 60rpx; }
+
+.hero { padding: 30rpx 6rpx 26rpx; }
+.hero-title { font-size: 56rpx; font-weight: 900; letter-spacing: .06em; }
+.hero-sub { font-size: 25rpx; color: #857c72; margin-top: 10rpx; line-height: 1.6; }
+
+.panel {
+  background: rgba(255, 255, 255, .55);
+  border: 1rpx solid rgba(43, 39, 36, .12);
+  border-radius: 24rpx;
+  padding: 28rpx 28rpx 32rpx;
+}
+
+.og { margin: 24rpx 0; }
+.og-title { font-size: 28rpx; font-weight: 800; margin-bottom: 14rpx; }
+.opts { display: flex; gap: 14rpx; flex-wrap: wrap; }
+.opt {
+  flex: 1 1 200rpx;
+  border: 3rpx solid rgba(43, 39, 36, .14);
+  border-radius: 18rpx;
+  padding: 16rpx 20rpx;
+  background: rgba(255, 255, 255, .6);
+  box-sizing: border-box;
+  transition: all .15s;
+}
+.opt-name { font-size: 28rpx; font-weight: 800; }
+.opt-desc { font-size: 22rpx; color: #857c72; line-height: 1.5; margin-top: 6rpx; }
+.opt.on { border-color: #b5382e; background: rgba(181, 56, 46, .07); box-shadow: 0 0 0 2rpx #b5382e; }
+.opt.on .opt-name { color: #b5382e; }
+
+.foot { margin-top: 24rpx; font-size: 21rpx; color: #857c72; text-align: center; line-height: 1.6; }

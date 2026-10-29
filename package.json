@@ -1,0 +1,12 @@
+{
+  "name": "blind-xiangqi-mp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "盲下象棋 · 微信小程序（原生 + TypeScript）",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4"
+  }
+}

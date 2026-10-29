@@ -1,0 +1,129 @@
+<view class="page">
+  <view class="header">
+    <view class="h-title">对局中<text class="h-sub">V1 核心玩法 · 暗子走完翻开</text></view>
+    <view class="hbtn" bindtap="onRulesOpen">规则</view>
+    <view class="hbtn {{vibOn ? '' : 'muted'}}" bindtap="onToggleVib">{{vibOn ? '震动开' : '震动关'}}</view>
+    <view class="hbtn accent" bindtap="onRestart">重开</view>
+  </view>
+
+  <view class="status">
+    <view class="turn {{status.turnCls}}">{{status.turnText}}</view>
+    <view class="chip">{{status.modeText}}</view>
+    <view class="chip">{{status.moveText}}</view>
+    <view class="chip">{{status.noCapText}}</view>
+  </view>
+
+  <view class="board-zone">
+    <view class="board-wrap">
+      <!-- 纯 WXML/CSS 静态棋盘：避免 type=2d canvas 在部分环境的独立合成层盖住上层棋子 -->
+      <view class="board-bg">
+        <view class="frame"></view>
+        <view wx:for="{{[0,1,2,3,4,5,6,7,8,9]}}" wx:key="*this" class="bl hl"
+          style="top:{{(60 + 100 * item) / 10.8}}%"></view>
+        <view class="bl vl full" style="left:6.25%"></view>
+        <view class="bl vl full" style="left:93.75%"></view>
+        <view wx:for="{{[1,2,3,4,5,6,7]}}" wx:key="*this" class="bl vl seg-t"
+          style="left:{{(60 + 100 * item) / 9.6}}%"></view>
+        <view wx:for="{{[1,2,3,4,5,6,7]}}" wx:key="*this" class="bl vl seg-b"
+          style="left:{{(60 + 100 * item) / 9.6}}%"></view>
+        <view class="bl diag" style="left:47.92%;top:14.81%;transform:translate(-50%,-50%) rotate(45deg)"></view>
+        <view class="bl diag" style="left:47.92%;top:14.81%;transform:translate(-50%,-50%) rotate(-45deg)"></view>
+        <view class="bl diag" style="left:47.92%;top:79.63%;transform:translate(-50%,-50%) rotate(45deg)"></view>
+        <view class="bl diag" style="left:47.92%;top:79.63%;transform:translate(-50%,-50%) rotate(-45deg)"></view>
+        <view class="river-t" style="left:28.13%">楚 河</view>
+        <view class="river-t" style="left:71.88%">汉 界</view>
+      </view>
+      <!-- 上一步落点标记 -->
+      <view class="layer">
+        <view wx:for="{{marks}}" wx:key="index" class="mark"
+          style="left:{{item.x}}%;top:{{item.y}}%"></view>
+      </view>
+      <!-- 棋子层 -->
+      <view class="layer">
+        <view wx:for="{{viewPieces}}" wx:key="id"
+          class="piece {{item.revealed ? 'revealed' : ''}} {{item.sel ? 'sel' : ''}} {{item.incheck ? 'incheck' : ''}} {{item.lastmv ? 'lastmv' : ''}} {{item.dying ? 'dying' : ''}}"
+          style="left:{{item.x}}%;top:{{item.y}}%"
+          data-id="{{item.id}}" bindtap="onPieceTap">
+          <view class="flip">
+            <view class="face back {{item.backCls}}">?</view>
+            <view class="face front {{item.color}}">{{item.char}}</view>
+          </view>
+        </view>
+      </view>
+      <!-- 走法提示层 -->
+      <view class="layer">
+        <view wx:for="{{hints}}" wx:key="index"
+          class="hint {{item.cap ? 'cap' : ''}}"
+          style="left:{{item.x}}%;top:{{item.y}}%"
+          data-r="{{item.r}}" data-c="{{item.c}}" bindtap="onHintTap"></view>
+      </view>
+    </view>
+  </view>
+
+  <view class="trays">
+    <view class="tray">
+      <view class="tray-b">被吃 · 红子</view>
+      <view class="tray-list">
+        <text wx:for="{{trayRed}}" wx:key="index" class="tp red">{{item}}</text>
+        <text wx:if="{{!trayRed.length}}" class="tray-empty">尚无</text>
+      </view>
+    </view>
+    <view class="tray">
+      <view class="tray-b">被吃 · 黑子</view>
+      <view class="tray-list">
+        <text wx:for="{{trayBlack}}" wx:key="index" class="tp black">{{item}}</text>
+        <text wx:if="{{!trayBlack.length}}" class="tray-empty">尚无</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="notes">规则要点：暗子按所在位置走法行棋，走完翻开；暗子可吃暗子（可能误吃己方将帅 → 赢方选择悔棋或判负）；无合法走法判负；120 半回合无吃子判和。</view>
+</view>
+
+<!-- 误吃悔棋 -->
+<view class="ov {{showUndo ? '' : 'hide'}}">
+  <view class="panel">
+    <view class="panel-title">误吃己方将帅！</view>
+    <view class="undo-text">{{undoText}}</view>
+    <view class="big" bindtap="onUndoYes">同意悔一步</view>
+    <view class="big gray" bindtap="onUndoNo">不同意 · 按吃将判负</view>
+  </view>
+</view>
+
+<!-- 终局 -->
+<view class="ov {{showEnd ? '' : 'hide'}}">
+  <view class="panel">
+    <view class="result {{endTitleCls}}">{{endTitle}}</view>
+    <view class="end-reason">{{endReason}}</view>
+    <view class="panel-sub center">棋盘上全部暗子已翻开，可回看本局的偶然性</view>
+    <view class="big" bindtap="onAgain">再来一局（重新洗牌）</view>
+    <view class="big gray" bindtap="onBackSetup">更改设置</view>
+  </view>
+</view>
+
+<!-- 规则 -->
+<view class="ov {{showRules ? '' : 'hide'}}">
+  <view class="panel">
+    <view class="panel-title">玩法规则</view>
+    <view class="rh">洗牌与暗子</view>
+    <view class="rl">· A1 半盘内洗：将帅明置九宫原位，其余各 15 子在本方半盘内随机洗置（归属可由位置推知）。A2 跨河全混：将帅明置，其余 30 子混置（归属未知）。B 全盘混洗：32 子含将帅全部暗置混洗。</view>
+    <view class="rl">· 暗子按所在位置对应的标准棋子走法移动与吃子（蹩马腿、塞象眼、炮架、九宫/河界限制均适用）。</view>
+    <view class="rh">操作权</view>
+    <view class="rl">· 暗子只能被「所在半盘」的一方操作；明子只有其颜色归属方能走。</view>
+    <view class="rh">翻开与修正</view>
+    <view class="rl">· 暗子走完立即翻开，之后按真实身份行棋，翻开不可取消；翻开的士可出九宫、象可过河（形状不变仍塞象眼）；翻开的兵按当前位置套用过河规则。</view>
+    <view class="rh">吃子与揭示</view>
+    <view class="rl">· 暗子可吃暗子（不分敌我，可能误吃己方将帅）；不可吃操作方已翻开的同色明子。被吃的暗子身份立即公开。</view>
+    <view class="rh">胜负</view>
+    <view class="rl">· 吃将即胜：吃掉对方将/帅立即获胜；已翻开的将帅同线无隔子时，轮到方可直接飞将吃帅。</view>
+    <view class="rl">· 将军规则：将军/应将/将死仅对已翻开的将帅生效；暗将可被直接吃掉（吃方胜）；将帅对脸为非法走法。</view>
+    <view class="rh">终局</view>
+    <view class="rl">· 无合法走法判负；120 半回合无吃子判和；三次重复局面按长将简化判罚。误吃己方暗置将帅：同屏由赢方选择「悔一步」或「判负」；陪练模式直接判负。</view>
+    <view class="big gray" bindtap="onRulesClose">关闭</view>
+  </view>
+</view>
+
+<!-- toast -->
+<view class="toast-wrap">
+  <view wx:if="{{toast.show}}" class="toast {{toast.cls}}">{{toast.text}}</view>
+</view>

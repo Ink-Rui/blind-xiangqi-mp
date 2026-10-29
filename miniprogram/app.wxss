@@ -1,0 +1,131 @@
+/* ===== 全局：与原型一致的暖纸色视觉 ===== */
+page {
+  background: #f6f1e7;
+  color: #2b2724;
+  font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-size: 28rpx;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  padding: 12rpx 4rpx 20rpx;
+}
+.h-title { font-size: 34rpx; font-weight: 800; flex: 1; }
+.h-sub { display: block; font-size: 21rpx; color: #857c72; font-weight: 400; }
+.hbtn {
+  font-size: 25rpx;
+  padding: 8rpx 24rpx;
+  border-radius: 99rpx;
+  border: 1rpx solid rgba(43, 39, 36, .14);
+  background: rgba(255, 255, 255, .7);
+  color: #2b2724;
+}
+.hbtn.accent { color: #b5382e; border-color: rgba(181, 56, 46, .5); }
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 14rpx;
+  flex-wrap: wrap;
+  padding: 6rpx 4rpx 18rpx;
+  font-size: 25rpx;
+  color: #857c72;
+}
+.turn {
+  font-size: 30rpx;
+  font-weight: 800;
+  padding: 8rpx 28rpx;
+  border-radius: 99rpx;
+  color: #fff;
+  transition: all .25s;
+}
+.turn.red { background: linear-gradient(135deg, #c4453a, #a02c24); }
+.turn.black { background: linear-gradient(135deg, #4a423a, #2b2724); }
+.turn.over { background: linear-gradient(135deg, #8a8178, #6b6259); }
+.chip {
+  padding: 7rpx 20rpx;
+  border-radius: 99rpx;
+  background: rgba(255, 255, 255, .7);
+  border: 1rpx solid rgba(43, 39, 36, .14);
+  font-size: 23rpx;
+}
+
+/* ===== 按钮 ===== */
+.big {
+  display: block;
+  width: 100%;
+  margin-top: 26rpx;
+  padding: 20rpx 0;
+  border-radius: 16rpx;
+  background: linear-gradient(135deg, #c4453a, #a02c24);
+  color: #fff;
+  font-size: 32rpx;
+  font-weight: 800;
+  letter-spacing: .2em;
+  text-align: center;
+  line-height: 1.4;
+}
+.big.gray { background: linear-gradient(135deg, #8a8178, #6b6259); }
+.big:active { opacity: .85; }
+
+/* ===== 弹层 ===== */
+.ov {
+  position: fixed;
+  left: 0; top: 0; right: 0; bottom: 0;
+  background: rgba(43, 39, 36, .55);
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32rpx;
+}
+.ov.hide { display: none; }
+.panel {
+  background: #f9f4ea;
+  border-radius: 32rpx;
+  width: 100%;
+  max-height: 88vh;
+  overflow-y: auto;
+  padding: 40rpx 44rpx;
+  box-shadow: 0 24rpx 80rpx rgba(0, 0, 0, .3);
+  box-sizing: border-box;
+}
+.panel-title { font-size: 40rpx; font-weight: 800; margin-bottom: 8rpx; }
+.panel-sub { font-size: 25rpx; color: #857c72; margin-bottom: 28rpx; }
+
+.result { font-size: 60rpx; font-weight: 900; text-align: center; margin: 16rpx 0 8rpx; }
+.result.rr { color: #b5382e; }
+.result.rb { color: #3a332d; }
+.end-reason { text-align: center; color: #857c72; font-size: 27rpx; margin-bottom: 8rpx; }
+.center { text-align: center; }
+.undo-text { font-size: 29rpx; line-height: 1.7; margin-bottom: 8rpx; white-space: pre-line; }
+
+/* ===== 规则弹层 ===== */
+.rh { font-size: 29rpx; color: #b5382e; font-weight: 800; margin: 24rpx 0 6rpx; }
+.rl { font-size: 26rpx; line-height: 1.75; color: #4a423a; }
+
+/* ===== toast ===== */
+.toast-wrap {
+  position: fixed;
+  left: 0; right: 0;
+  top: 24rpx;
+  z-index: 90;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.toast {
+  background: rgba(43, 39, 36, .92);
+  color: #fff;
+  font-size: 27rpx;
+  padding: 14rpx 32rpx;
+  border-radius: 99rpx;
+  box-shadow: 0 8rpx 24rpx rgba(0, 0, 0, .25);
+  max-width: 90vw;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.toast.red { background: linear-gradient(135deg, #c4453a, #8f231b); font-weight: 800; letter-spacing: .1em; }

@@ -1,0 +1,159 @@
+.page { padding: 16rpx 24rpx 50rpx; }
+
+.board-zone { display: flex; justify-content: center; }
+.board-wrap {
+  position: relative;
+  width: 690rpx;
+  height: 776rpx;   /* 690 × 1080/960 */
+}
+/* ===== 纯 CSS 静态棋盘（960×1080 逻辑坐标 → 百分比） ===== */
+.board-bg {
+  position: absolute; left: 0; top: 0; right: 0; bottom: 0;
+  background: #efe4cf;
+  border: 3rpx solid #c9b591;
+  border-radius: 10rpx;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.bl { position: absolute; background: #8a6f52; }
+.hl { left: 6.25%; width: 87.5%; height: 2rpx; margin-top: -1rpx; }
+.vl { top: 5.56%; width: 2rpx; margin-left: -1rpx; }
+.vl.full { height: 83.34%; }
+.vl.seg-t { height: 37.04%; }
+.vl.seg-b { top: 51.85%; height: 37.04%; }
+.diag { width: 29.46%; height: 2rpx; }
+.frame {
+  position: absolute;
+  left: 4.17%; top: 3.7%; width: 91.66%; height: 92.59%;
+  border: 3rpx solid #8a6f52;
+}
+.river-t {
+  position: absolute; top: 47.22%;
+  transform: translate(-50%, -50%);
+  font-size: 36rpx; font-weight: 700; letter-spacing: 8rpx;
+  color: rgba(138, 111, 82, .55);
+}
+.layer { position: absolute; left: 0; top: 0; right: 0; bottom: 0; }
+
+/* ===== 棋子：单面显隐翻牌 ===== */
+.piece {
+  position: absolute;
+  width: 63rpx;
+  height: 63rpx;
+  margin-left: -31.5rpx;
+  margin-top: -31.5rpx;
+  transition: left .28s ease, top .28s ease;
+  z-index: 2;
+}
+.piece .flip {
+  position: absolute;
+  left: 0; top: 0; right: 0; bottom: 0;
+}
+.face {
+  position: absolute;
+  left: 0; top: 0; right: 0; bottom: 0;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  box-shadow: 0 6rpx 12rpx rgba(43, 39, 36, .28), inset 0 -4rpx 8rpx rgba(0, 0, 0, .12);
+  box-sizing: border-box;
+}
+/* 单面显隐方案：避免 backface-visibility/preserve-3d 在部分环境失效导致双面同隐 */
+.face.front { display: none; font-size: 33rpx; }
+.piece.revealed .face.front { display: flex; }
+.piece.revealed .face.back { display: none; }
+.face.back { font-size: 26rpx; }
+
+.face.front.red { background: radial-gradient(circle at 35% 30%, #cf5548, #a02c24); color: #fff; border: 4rpx solid #7e241d; }
+.face.front.black { background: radial-gradient(circle at 35% 30%, #55493e, #2b2724); color: #f3ead8; border: 4rpx solid #17130f; }
+.face.back.neutral { background: radial-gradient(circle at 35% 30%, #f5efe2, #e2d8c4); color: #9a8d7a; border: 4rpx solid #b7a98e; }
+.face.back.rd { background: radial-gradient(circle at 35% 30%, #f2ddd8, #e3c2ba); color: #b5382e; border: 4rpx solid rgba(181, 56, 46, .55); }
+.face.back.bk { background: radial-gradient(circle at 35% 30%, #e9e5df, #cfc9bd); color: #4a423a; border: 4rpx solid rgba(43, 39, 36, .45); }
+
+.piece.sel .face {
+  outline: 6rpx solid #d9a441;
+  outline-offset: -2rpx;
+  box-shadow: 0 0 0 8rpx rgba(217, 164, 65, .35), 0 6rpx 16rpx rgba(43, 39, 36, .35);
+}
+.piece.incheck .face { animation: pulse 1s infinite; }
+.piece.dying { opacity: 0; transform: scale(.4); transition: all .45s ease; z-index: 1; }
+.piece.lastmv::after {
+  content: "";
+  position: absolute;
+  left: -14%; top: -14%; right: -14%; bottom: -14%;
+  border-radius: 50%;
+  border: 4rpx dashed rgba(217, 164, 65, .75);
+}
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 4rpx rgba(181, 56, 46, .9); }
+  50% { box-shadow: 0 0 0 14rpx rgba(181, 56, 46, .25); }
+}
+
+/* ===== 提示与标记 ===== */
+.hint {
+  position: absolute;
+  width: 63rpx; height: 63rpx;
+  margin-left: -31.5rpx; margin-top: -31.5rpx;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.hint::before {
+  content: "";
+  width: 24rpx; height: 24rpx;
+  border-radius: 50%;
+  background: rgba(181, 56, 46, .4);
+}
+.hint.cap::before { width: 54rpx; height: 54rpx; background: none; border: 5rpx solid rgba(181, 56, 46, .65); box-sizing: border-box; }
+.mark {
+  position: absolute;
+  width: 63rpx; height: 63rpx;
+  margin-left: -31.5rpx; margin-top: -31.5rpx;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mark::before { content: ""; width: 30rpx; height: 30rpx; border-radius: 50%; background: rgba(217, 164, 65, .3); }
+
+/* ===== 俘获区 ===== */
+.trays { display: flex; gap: 20rpx; margin-top: 24rpx; }
+.tray {
+  flex: 1;
+  background: rgba(255, 255, 255, .65);
+  border: 1rpx solid rgba(43, 39, 36, .14);
+  border-radius: 16rpx;
+  padding: 12rpx 16rpx;
+  min-height: 88rpx;
+  box-sizing: border-box;
+}
+.tray-b { font-size: 22rpx; color: #857c72; font-weight: 600; margin-bottom: 6rpx; }
+.tray-list { display: flex; flex-wrap: wrap; gap: 4rpx; }
+.tp {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48rpx; height: 48rpx;
+  border-radius: 50%;
+  font-size: 23rpx;
+  font-weight: 800;
+  color: #fff;
+}
+.tp.red { background: #a02c24; }
+.tp.black { background: #3a332d; }
+.tray-empty { font-size: 22rpx; color: #857c72; }
+
+.notes {
+  margin-top: 28rpx;
+  font-size: 22rpx;
+  color: #857c72;
+  line-height: 1.7;
+  border-top: 2rpx dashed rgba(43, 39, 36, .14);
+  padding-top: 16rpx;
+}
+
+/* 震动开关置灰态（.hbtn 定义在 app.wxss） */
+.hbtn.muted { opacity: .5; }

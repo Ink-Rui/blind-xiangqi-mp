@@ -1,0 +1,47 @@
+<view class="page">
+  <view class="hero">
+    <view class="hero-title">盲下象棋</view>
+    <view class="hero-sub">标准象棋盘 · 开局暗置洗牌 · 走完翻开 · 一半棋艺一半运气</view>
+  </view>
+
+  <view class="panel">
+    <view class="og">
+      <view class="og-title">洗牌模式</view>
+      <view class="opts">
+        <view wx:for="{{opts.shuffle}}" wx:key="v"
+          class="opt {{sel.shuffle === item.v ? 'on' : ''}}"
+          data-group="shuffle" data-v="{{item.v}}" bindtap="onPick">
+          <view class="opt-name">{{item.name}}</view>
+          <view class="opt-desc">{{item.desc}}</view>
+        </view>
+      </view>
+    </view>
+
+    <view class="og">
+      <view class="og-title">胜负规则</view>
+      <view class="opts">
+        <view wx:for="{{opts.rule}}" wx:key="v"
+          class="opt {{sel.rule === item.v ? 'on' : ''}}"
+          data-group="rule" data-v="{{item.v}}" bindtap="onPick">
+          <view class="opt-name">{{item.name}}</view>
+          <view class="opt-desc">{{item.desc}}</view>
+        </view>
+      </view>
+    </view>
+
+    <view class="og">
+      <view class="og-title">对局形式</view>
+      <view class="opts">
+        <view wx:for="{{opts.play}}" wx:key="v"
+          class="opt {{sel.play === item.v ? 'on' : ''}}"
+          data-group="play" data-v="{{item.v}}" bindtap="onPick">
+          <view class="opt-name">{{item.name}}</view>
+          <view class="opt-desc">{{item.desc}}</view>
+        </view>
+      </view>
+    </view>
+
+    <view class="big" bindtap="onStart">开始对局</view>
+    <view class="foot">V1 核心对局：同屏双人 / 随机陪练 · 联机与正式人机在后续版本</view>
+  </view>
+</view>
