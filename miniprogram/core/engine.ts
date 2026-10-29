@@ -288,9 +288,10 @@ function isCapturable(g: PositionSnapshot, target: Piece, side: Side): boolean {
 }
 
 /** hard 难度单步评估：吃子价值 - 被吃风险 + 翻子/推进/将军小分 - 重复局面罚分 */
-function aiScore(g: GameState, m: { p: Piece; t: Pos }): number {
+function aiScore(g: GameState, m: { p: Piece; t: Pos }, side: Side): number {
   const { p, t } = m;
   const from = p.pos!;
+  const enemy = opp(side);
   let s = Math.random() * 1.5;                 // 少量随机，避免走出死循环
   const target = pieceAt(g, t);
   if (target) {
@@ -300,24 +301,24 @@ function aiScore(g: GameState, m: { p: Piece; t: Pos }): number {
   const after = simMove(g, p, t);              // simMove 会把走子方翻明
   // 走完暴露在对方火力下 → 按自身（已翻明）价值扣分，不白送
   const moved = after.pieces.find(q => q.id === p.id)!;
-  if (isCapturable(after, moved, 'red')) s -= AI_VALUE[p.type] * 0.9;
+  if (isCapturable(after, moved, enemy)) s -= AI_VALUE[p.type] * 0.9;
   // 己方明将暴露在对方火力下 → 重罚（送将）
-  const myK = after.pieces.find(q => q.type === 'K' && q.color === 'black' && !q.captured && q.revealed);
-  if (myK && myK.pos && isCapturable(after, myK, 'red')) s -= 800;
+  const myK = after.pieces.find(q => q.type === 'K' && q.color === side && !q.captured && q.revealed);
+  if (myK && myK.pos && isCapturable(after, myK, enemy)) s -= 800;
   if (!p.revealed) s += g.moveNum <= 20 ? 3 : 1;   // 早翻子：换取信息与操作权
-  s += (t.r - from.r) * 0.4;                       // 黑方向红方半盘推进
-  if (g.cfg.rule === 'check' && inCheck(after, 'red')) s += 12;
+  s += (side === 'black' ? t.r - from.r : from.r - t.r) * 0.4;   // 向对方半盘推进
+  if (g.cfg.rule === 'check' && inCheck(after, enemy)) s += 12;
   // 避免第三次重复局面（长将判罚/无吃子判和都吃亏）
-  const h = after.pieces.map(q => q.id + ':' + (q.pos ? q.pos.r + '_' + q.pos.c : 'x') + (q.revealed ? 1 : 0)).join('|') + '#red';
+  const h = after.pieces.map(q => q.id + ':' + (q.pos ? q.pos.r + '_' + q.pos.c : 'x') + (q.revealed ? 1 : 0)).join('|') + '#' + enemy;
   if ((g.repMap[h] || 0) >= 2) s -= 300;
   return s;
 }
 
-/** 随机陪练走子：easy 纯随机 / normal 60% 偏好吃子 / hard 启发式评估 */
-export function pickAIMove(g: GameState): { p: Piece; t: Pos } | null {
+/** 陪练走子：easy 纯随机 / normal 60% 偏好吃子 / hard 启发式评估（side 供 AI 对 AI 压测） */
+export function pickAIMove(g: GameState, side: Side = 'black'): { p: Piece; t: Pos } | null {
   const all: { p: Piece; t: Pos }[] = [];
   for (const q of g.pieces) {
-    if (q.captured || !operable(g, q, 'black')) continue;
+    if (q.captured || !operable(g, q, side)) continue;
     for (const t of legalTargets(g, q)) all.push({ p: q, t });
   }
   if (!all.length) return null;
@@ -332,7 +333,7 @@ export function pickAIMove(g: GameState): { p: Piece; t: Pos } | null {
   let best: { p: Piece; t: Pos }[] = [];
   let bestScore = -Infinity;
   for (const m of all) {
-    const s = aiScore(g, m);
+    const s = aiScore(g, m, side);
     if (s > bestScore + 0.01) { bestScore = s; best = [m]; }
     else if (s > bestScore - 0.01) best.push(m);
   }
