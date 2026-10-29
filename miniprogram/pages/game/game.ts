@@ -19,9 +19,11 @@ interface UndoCtx {
 const SHUFFLES = ['A1', 'A2', 'B'];
 const RULES = ['check', 'kill'];
 const PLAYS = ['hot', 'ai'];
+const LEVELS = ['easy', 'normal', 'hard'];
 const MODE_TEXT: Record<string, string> = { A1: 'A1 半盘内洗', A2: 'A2 跨河全混', B: 'B 全盘混洗' };
 const RULE_TEXT: Record<string, string> = { check: '将军规则', kill: '吃将即胜' };
 const PLAY_TEXT: Record<string, string> = { hot: '同屏', ai: '陪练' };
+const LEVEL_TEXT: Record<string, string> = { easy: '简单', normal: '普通', hard: '困难' };
 
 Page({
   data: {
@@ -49,7 +51,8 @@ Page({
     const cfg: Cfg = {
       shuffle: opts.shuffle && SHUFFLES.indexOf(opts.shuffle) >= 0 ? opts.shuffle as Cfg['shuffle'] : 'A1',
       rule: opts.rule && RULES.indexOf(opts.rule) >= 0 ? opts.rule as Cfg['rule'] : 'check',
-      play: opts.play && PLAYS.indexOf(opts.play) >= 0 ? opts.play as Cfg['play'] : 'hot'
+      play: opts.play && PLAYS.indexOf(opts.play) >= 0 ? opts.play as Cfg['play'] : 'hot',
+      level: opts.level && LEVELS.indexOf(opts.level) >= 0 ? opts.level as Cfg['level'] : 'normal'
     };
     // 震动开关：本地持久化，默认开
     this.setData({ vibOn: wx.getStorageSync('vibOn') !== false });
@@ -121,7 +124,8 @@ Page({
         turnCls: g.over ? 'over' : g.turn,
         turnText: g.over ? '对局结束'
           : (g.turn === 'red' ? '红方' : '黑方') + '行棋' + (g.cfg.play === 'ai' && g.turn === 'black' ? '（陪练）' : ''),
-        modeText: MODE_TEXT[g.cfg.shuffle] + ' · ' + RULE_TEXT[g.cfg.rule] + ' · ' + PLAY_TEXT[g.cfg.play],
+        modeText: MODE_TEXT[g.cfg.shuffle] + ' · ' + RULE_TEXT[g.cfg.rule] + ' · ' + PLAY_TEXT[g.cfg.play] +
+          (g.cfg.play === 'ai' ? ' · ' + LEVEL_TEXT[g.cfg.level || 'normal'] : ''),
         moveText: '第 ' + g.moveNum + ' 手',
         noCapText: '无吃子 ' + g.noCap + '/120'
       }
@@ -175,12 +179,12 @@ Page({
     if (target) {
       this.dyingPos[target.id] = { r: t.r, c: t.c };
       if (!target.revealed) {
-        this.render(); this.vibrate('light');
+        this.render(); this.vibrate('medium');
         setTimeout(() => { if (this.dyingPos[target.id]) { this.dyingOut[target.id] = true; this.render(); } }, 700);
         setTimeout(() => { delete this.dyingPos[target.id]; delete this.dyingOut[target.id]; this.render(); }, 1250);
       } else {
         this.dyingOut[target.id] = true;
-        this.render(); this.vibrate('light');
+        this.render(); this.vibrate('medium');
         setTimeout(() => { delete this.dyingPos[target.id]; delete this.dyingOut[target.id]; this.render(); }, 550);
       }
     } else {
@@ -359,12 +363,20 @@ Page({
     this.setData({ vibOn });
     try { wx.setStorageSync('vibOn', vibOn); } catch (e) { /* 存储失败不影响对局 */ }
     this.showToast(vibOn ? '已开启震动反馈' : '已关闭震动反馈', '', 1500);
+    if (vibOn) this.vibrate('medium');   // 立即试震一下，方便确认手机有反应
   },
 
   vibrate(type: 'light' | 'medium' | 'heavy') {
     if (!this.data.vibOn) return;   // 用户已关闭震动
-    // 仅关键事件震动：吃子 light / 将军 medium / 终局 heavy；普通走子不震
-    // （安卓不支持强度分级一律默认强度，模拟器还会播放屏幕晃动动画，故高频轻震全部移除）
-    try { wx.vibrateShort({ type }); } catch (e) { /* 设备不支持时静默 */ }
+    // 仅关键事件震动：吃子 medium / 将军 medium / 终局 heavy；普通走子不震
+    // 部分安卓机型/基础库对 vibrateShort 带 type 参数会直接 fail，失败时回退 vibrateLong 保证有震感
+    try {
+      wx.vibrateShort({
+        type,
+        fail: () => { try { wx.vibrateLong({ fail: () => {} }); } catch (e) { /* 静默 */ } }
+      });
+    } catch (e) {
+      try { wx.vibrateLong({ fail: () => {} }); } catch (e2) { /* 静默 */ }
+    }
   }
 });

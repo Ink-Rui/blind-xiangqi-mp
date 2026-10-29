@@ -41,7 +41,19 @@
       </view>
     </view>
 
+    <view class="og" wx:if="{{sel.play === 'ai'}}">
+      <view class="og-title">陪练难度</view>
+      <view class="opts">
+        <view wx:for="{{opts.level}}" wx:key="v"
+          class="opt {{sel.level === item.v ? 'on' : ''}}"
+          data-group="level" data-v="{{item.v}}" bindtap="onPick">
+          <view class="opt-name">{{item.name}}</view>
+          <view class="opt-desc">{{item.desc}}</view>
+        </view>
+      </view>
+    </view>
+
     <view class="big" bindtap="onStart">开始对局</view>
-    <view class="foot">V1 核心对局：同屏双人 / 随机陪练 · 联机与正式人机在后续版本</view>
+    <view class="foot">V1 核心对局：同屏双人 / 三档 AI 陪练 · 联机对弈在后续版本</view>
   </view>
 </view>

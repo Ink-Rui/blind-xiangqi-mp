@@ -21,7 +21,8 @@ export interface Slot { r: number; c: number; t: PieceType }
 export type ShuffleMode = 'A1' | 'A2' | 'B';
 export type RuleMode = 'check' | 'kill';
 export type PlayMode = 'hot' | 'ai';
-export interface Cfg { shuffle: ShuffleMode; rule: RuleMode; play: PlayMode }
+export type Level = 'easy' | 'normal' | 'hard';
+export interface Cfg { shuffle: ShuffleMode; rule: RuleMode; play: PlayMode; level: Level }
 export interface HistoryEntry { hash: string; checkBy: Side | null }
 export interface LastMove { from: Pos; to: Pos }
 export interface GameState {
@@ -259,7 +260,7 @@ export function legalTargets(g: GameState, p: Piece): Pos[] {
 }
 
 /** 操作权 R1：暗子归所在半盘方，明子归颜色方 */
-export const operable = (g: GameState, q: Piece, side: Side): boolean =>
+export const operable = (g: PositionSnapshot, q: Piece, side: Side): boolean =>
   q.revealed ? q.color === side : q.pos ? halfOwner(q.pos) === side : false;
 
 export function hasLegal(g: GameState, side: Side): boolean {
@@ -271,7 +272,48 @@ export function clonePieces(g: GameState): Piece[] {
   return g.pieces.map(q => ({ ...q, pos: q.pos ? { ...q.pos } : null }));
 }
 
-/** 随机陪练：偏好吃子的随机走法（正式人机智能另行开发） */
+/** 子力估值（AI 评估用） */
+const AI_VALUE: Record<PieceType, number> = { K: 1000, R: 90, C: 45, N: 40, B: 20, A: 20, P: 10 };
+
+/** side 一方（按操作权规则）能否吃掉 target */
+function isCapturable(g: PositionSnapshot, target: Piece, side: Side): boolean {
+  if (!target.pos) return false;
+  for (const q of g.pieces) {
+    if (q.captured || q.color === side || !q.pos) continue;
+    if (!operable(g, q, side)) continue;
+    if (pseudoMoves(g, q).some(t2 => t2.r === target.pos!.r && t2.c === target.pos!.c) &&
+        canCapture(g, q, target)) return true;
+  }
+  return false;
+}
+
+/** hard 难度单步评估：吃子价值 - 被吃风险 + 翻子/推进/将军小分 - 重复局面罚分 */
+function aiScore(g: GameState, m: { p: Piece; t: Pos }): number {
+  const { p, t } = m;
+  const from = p.pos!;
+  let s = Math.random() * 1.5;                 // 少量随机，避免走出死循环
+  const target = pieceAt(g, t);
+  if (target) {
+    // 明子按真实身份计价值；暗子身份未知，按平均子力估计（鼓励适度吃暗子换信息）
+    s += target.revealed ? AI_VALUE[target.type] : 50;
+  }
+  const after = simMove(g, p, t);              // simMove 会把走子方翻明
+  // 走完暴露在对方火力下 → 按自身（已翻明）价值扣分，不白送
+  const moved = after.pieces.find(q => q.id === p.id)!;
+  if (isCapturable(after, moved, 'red')) s -= AI_VALUE[p.type] * 0.9;
+  // 己方明将暴露在对方火力下 → 重罚（送将）
+  const myK = after.pieces.find(q => q.type === 'K' && q.color === 'black' && !q.captured && q.revealed);
+  if (myK && myK.pos && isCapturable(after, myK, 'red')) s -= 800;
+  if (!p.revealed) s += g.moveNum <= 20 ? 3 : 1;   // 早翻子：换取信息与操作权
+  s += (t.r - from.r) * 0.4;                       // 黑方向红方半盘推进
+  if (g.cfg.rule === 'check' && inCheck(after, 'red')) s += 12;
+  // 避免第三次重复局面（长将判罚/无吃子判和都吃亏）
+  const h = after.pieces.map(q => q.id + ':' + (q.pos ? q.pos.r + '_' + q.pos.c : 'x') + (q.revealed ? 1 : 0)).join('|') + '#red';
+  if ((g.repMap[h] || 0) >= 2) s -= 300;
+  return s;
+}
+
+/** 随机陪练走子：easy 纯随机 / normal 60% 偏好吃子 / hard 启发式评估 */
 export function pickAIMove(g: GameState): { p: Piece; t: Pos } | null {
   const all: { p: Piece; t: Pos }[] = [];
   for (const q of g.pieces) {
@@ -279,7 +321,20 @@ export function pickAIMove(g: GameState): { p: Piece; t: Pos } | null {
     for (const t of legalTargets(g, q)) all.push({ p: q, t });
   }
   if (!all.length) return null;
-  const caps = all.filter(m => pieceAt(g, m.t));
-  if (caps.length && Math.random() < 0.6) return caps[Math.floor(Math.random() * caps.length)];
-  return all[Math.floor(Math.random() * all.length)];
+  const level: Level = g.cfg.level || 'normal';
+  if (level === 'easy') return all[Math.floor(Math.random() * all.length)];
+  if (level === 'normal') {
+    const caps = all.filter(m => pieceAt(g, m.t));
+    if (caps.length && Math.random() < 0.6) return caps[Math.floor(Math.random() * caps.length)];
+    return all[Math.floor(Math.random() * all.length)];
+  }
+  // hard：逐个候选走法打分，取最高分（并列时随机）
+  let best: { p: Piece; t: Pos }[] = [];
+  let bestScore = -Infinity;
+  for (const m of all) {
+    const s = aiScore(g, m);
+    if (s > bestScore + 0.01) { bestScore = s; best = [m]; }
+    else if (s > bestScore - 0.01) best.push(m);
+  }
+  return best[Math.floor(Math.random() * best.length)];
 }

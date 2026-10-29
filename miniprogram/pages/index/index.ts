@@ -1,7 +1,7 @@
 interface OptItem { v: string; name: string; desc: string }
-interface SelCfg { shuffle: string; rule: string; play: string }
+interface SelCfg { shuffle: string; rule: string; play: string; level: string }
 
-const OPTS: { shuffle: OptItem[]; rule: OptItem[]; play: OptItem[] } = {
+const OPTS: { shuffle: OptItem[]; rule: OptItem[]; play: OptItem[]; level: OptItem[] } = {
   shuffle: [
     { v: 'A1', name: 'A1 半盘内洗', desc: '将帅明置九宫原位，各 15 子在本方半盘内洗；归属可由位置推知' },
     { v: 'A2', name: 'A2 跨河全混', desc: '将帅明置，其余 30 子跨河混置；归属未知' },
@@ -13,26 +13,37 @@ const OPTS: { shuffle: OptItem[]; rule: OptItem[]; play: OptItem[] } = {
   ],
   play: [
     { v: 'hot', name: '双人同屏', desc: '面对面轮流操作一部手机，信息双方公开' },
-    { v: 'ai', name: '随机陪练', desc: '单人测试用：AI 随机走子（正式人机智能另行开发）' }
+    { v: 'ai', name: '随机陪练', desc: '单人对弈：与 AI 陪练过招，可选下方三档难度' }
+  ],
+  level: [
+    { v: 'easy', name: '简单', desc: 'AI 随手乱走，适合熟悉规则' },
+    { v: 'normal', name: '普通', desc: 'AI 倾向吃子，但时常漏算' },
+    { v: 'hard', name: '困难', desc: 'AI 权衡吃子与风险，护将推进、不白送子' }
   ]
 };
 
 const SHUFFLES = ['A1', 'A2', 'B'];
 const RULES = ['check', 'kill'];
 const PLAYS = ['hot', 'ai'];
+const LEVELS = ['easy', 'normal', 'hard'];
 
 Page({
   data: {
     opts: OPTS,
-    sel: { shuffle: 'A1', rule: 'check', play: 'hot' } as SelCfg
+    sel: { shuffle: 'A1', rule: 'check', play: 'hot', level: 'normal' } as SelCfg
   },
 
   onLoad() {
-    // 恢复上次选择
+    // 恢复上次选择（逐项校验，旧版本存储缺 level 时不影响其余项）
     try {
       const c = wx.getStorageSync('cfg');
-      if (c && SHUFFLES.indexOf(c.shuffle) >= 0 && RULES.indexOf(c.rule) >= 0 && PLAYS.indexOf(c.play) >= 0) {
-        this.setData({ sel: { shuffle: c.shuffle, rule: c.rule, play: c.play } });
+      if (c) {
+        const sel = { ...this.data.sel } as Record<string, string>;
+        if (SHUFFLES.indexOf(c.shuffle) >= 0) sel.shuffle = c.shuffle;
+        if (RULES.indexOf(c.rule) >= 0) sel.rule = c.rule;
+        if (PLAYS.indexOf(c.play) >= 0) sel.play = c.play;
+        if (LEVELS.indexOf(c.level) >= 0) sel.level = c.level;
+        this.setData({ sel: sel as unknown as SelCfg });
       }
     } catch (e) { /* 存储不可用时忽略 */ }
   },
@@ -47,7 +58,7 @@ Page({
     const sel = this.data.sel;
     try { wx.setStorageSync('cfg', sel); } catch (e) { /* 忽略 */ }
     wx.navigateTo({
-      url: '/pages/game/game?shuffle=' + sel.shuffle + '&rule=' + sel.rule + '&play=' + sel.play
+      url: '/pages/game/game?shuffle=' + sel.shuffle + '&rule=' + sel.rule + '&play=' + sel.play + '&level=' + sel.level
     });
   }
 });
