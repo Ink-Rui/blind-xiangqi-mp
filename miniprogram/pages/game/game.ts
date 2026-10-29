@@ -345,6 +345,11 @@ Page({
     const g = this.G;
     if (g) this.startGame({ ...g.cfg });
   },
+  /** 终局弹窗「再来一局」：同设置重新洗牌（含陪练难度） */
+  onAgain() {
+    const g = this.G;
+    if (g) this.startGame({ ...g.cfg });
+  },
   onBackSetup() {
     wx.navigateBack();
   },
