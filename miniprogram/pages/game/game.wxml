@@ -8,9 +8,12 @@
 
   <view class="status">
     <view class="turn {{status.turnCls}}">{{status.turnText}}</view>
+    <view class="chip chk" wx:if="{{status.check}}">将军！</view>
     <view class="chip">{{status.modeText}}</view>
     <view class="chip">{{status.moveText}}</view>
     <view class="chip">{{status.noCapText}}</view>
+    <view class="hbtn {{canUndo ? '' : 'muted'}}" bindtap="onUndoTap">悔棋</view>
+    <view class="hbtn {{canPass ? '' : 'muted'}}" bindtap="onPassTap">让一手</view>
   </view>
 
   <view class="board-zone">
@@ -77,7 +80,17 @@
     </view>
   </view>
 
-  <view class="notes">规则要点：暗子按所在位置走法行棋，走完翻开；暗子可吃暗子（可能误吃己方将帅 → 赢方选择悔棋或判负）；无合法走法判负；120 半回合无吃子判和。</view>
+  <view class="notes">规则要点：暗子按所在位置走法行棋，走完翻开；明子暗子均可吃暗子（可能误吃己方将帅 → 赢方选择悔棋或判负）；无合法走法判负；120 半回合无吃子判和。</view>
+</view>
+
+<!-- 协商：悔棋 / 让一手 -->
+<view class="ov {{showAsk ? '' : 'hide'}}">
+  <view class="panel">
+    <view class="panel-title">协商请求</view>
+    <view class="undo-text">{{askText}}</view>
+    <view class="big" bindtap="onAskYes">同意</view>
+    <view class="big gray" bindtap="onAskNo">不同意</view>
+  </view>
 </view>
 
 <!-- 误吃悔棋 -->
@@ -97,8 +110,15 @@
     <view class="end-reason">{{endReason}}</view>
     <view class="panel-sub center">棋盘上全部暗子已翻开，可回看本局的偶然性</view>
     <view class="big" bindtap="onAgain">再来一局（重新洗牌）</view>
+    <view class="big gray" bindtap="onViewBoard">查看棋局</view>
     <view class="big gray" bindtap="onBackSetup">更改设置</view>
   </view>
+</view>
+
+<!-- 终局回看悬浮条 -->
+<view class="endbar {{showEndBar ? '' : 'hide'}}">
+  <view class="ebtn" bindtap="onEndReopen">结果</view>
+  <view class="ebtn primary" bindtap="onAgain">再来一局</view>
 </view>
 
 <!-- 规则 -->
@@ -113,7 +133,7 @@
     <view class="rh">翻开与修正</view>
     <view class="rl">· 暗子走完立即翻开，之后按真实身份行棋，翻开不可取消；翻开的士可出九宫、象可过河（形状不变仍塞象眼）；翻开的兵按当前位置套用过河规则。</view>
     <view class="rh">吃子与揭示</view>
-    <view class="rl">· 暗子可吃暗子（不分敌我，可能误吃己方将帅）；不可吃操作方已翻开的同色明子。被吃的暗子身份立即公开。</view>
+    <view class="rl">· 明子与暗子均可吃暗子（暗子归属未知，可能误吃己方将帅）；不可吃已翻开的己方明子。被吃的暗子身份立即公开。</view>
     <view class="rh">胜负</view>
     <view class="rl">· 吃将即胜：吃掉对方将/帅立即获胜；已翻开的将帅同线无隔子时，轮到方可直接飞将吃帅。</view>
     <view class="rl">· 将军规则：将军/应将/将死仅对已翻开的将帅生效；暗将可被直接吃掉（吃方胜）；将帅对脸为非法走法。</view>

@@ -12,7 +12,7 @@ interface VMPiece {
   color: Side; char: string; backCls: string;
 }
 interface UndoCtx {
-  snap: { pieces: Piece[]; turn: Side; noCap: number; moveNum: number; lastMove: { from: Pos; to: Pos } | null };
+  snap: { pieces: Piece[]; turn: Side; noCap: number; moveNum: number; lastMove: { from: Pos; to: Pos } | null; flippedId?: string | null };
   attackerId: string; kingId: string; moverSide: Side;
 }
 
@@ -36,7 +36,10 @@ Page({
     toast: { show: false, cls: '', text: '' },
     showUndo: false, undoText: '',
     showEnd: false, endTitle: '', endTitleCls: '', endReason: '',
+    showEndBar: false,
     showRules: false,
+    showAsk: false, askText: '',
+    canUndo: false, canPass: false,
     vibOn: true
   },
 
@@ -46,6 +49,8 @@ Page({
   dyingOut: {} as Record<string, boolean>,
   toastTimer: 0,
   undoCtx: null as UndoCtx | null,
+  snaps: [] as UndoCtx['snap'][],        // 悔棋快照栈（每半回合一个，翻开信息不回滚）
+  askCtx: null as 'undo' | 'pass' | null,
 
   onLoad(opts: Record<string, string | undefined>) {
     const cfg: Cfg = {
@@ -67,8 +72,10 @@ Page({
     this.dyingPos = {};
     this.dyingOut = {};
     this.undoCtx = null;
+    this.snaps = [];
+    this.askCtx = null;
     this.G.busy = true;
-    this.setData({ showEnd: false, showUndo: false, showRules: false });
+    this.setData({ showEnd: false, showEndBar: false, showUndo: false, showRules: false, showAsk: false, canUndo: false, canPass: false });
     this.render();
     setTimeout(() => {
       if (!this.G || ep !== this.epoch) return;
@@ -127,8 +134,11 @@ Page({
         modeText: MODE_TEXT[g.cfg.shuffle] + ' · ' + RULE_TEXT[g.cfg.rule] + ' · ' + PLAY_TEXT[g.cfg.play] +
           (g.cfg.play === 'ai' ? ' · ' + LEVEL_TEXT[g.cfg.level || 'normal'] : ''),
         moveText: '第 ' + g.moveNum + ' 手',
-        noCapText: '无吃子 ' + g.noCap + '/120'
-      }
+        noCapText: '无吃子 ' + g.noCap + '/120',
+        check: !g.over && inCheck(g, g.turn)
+      },
+      canUndo: !g.over && !g.busy && this.snaps.length > 0 && !this.undoCtx && !this.askCtx,
+      canPass: !g.over && !g.busy && g.cfg.play === 'hot' && !this.undoCtx && !this.askCtx
     });
   },
 
@@ -147,6 +157,7 @@ Page({
     }
     if (g.selected === p) { g.selected = null; this.render(); return; }
     g.selected = p;
+    this.vibrate('light');   // 选中棋子轻震反馈
     this.render();
   },
 
@@ -165,8 +176,9 @@ Page({
     if (!legal.some(x => x.r === t.r && x.c === t.c)) return;
     g.busy = true; g.selected = null;
     const ep = this.epoch;
-    const snap = { pieces: clonePieces(g), turn: g.turn, noCap: g.noCap, moveNum: g.moveNum, lastMove: g.lastMove };
     const wasDark = !p.revealed;
+    const snap = { pieces: clonePieces(g), turn: g.turn, noCap: g.noCap, moveNum: g.moveNum, lastMove: g.lastMove, flippedId: wasDark ? p.id : null as string | null };
+    this.snaps.push(snap);
     const moverSide: Side = p.revealed ? p.color : (p.pos ? halfOwner(p.pos) : g.turn);
     const target = pieceAt(g, t);
     const from = { r: p.pos!.r, c: p.pos!.c };
@@ -188,7 +200,7 @@ Page({
         setTimeout(() => { delete this.dyingPos[target.id]; delete this.dyingOut[target.id]; this.render(); }, 550);
       }
     } else {
-      this.render();
+      this.render(); this.vibrate('light');   // 普通走子轻震
     }
 
     // 暗子行走后留悬念延时再翻开（与原型一致）
@@ -275,6 +287,7 @@ Page({
     const g = this.G;
     if (!g) return;
     const winner = opp(moverSide);
+    this.snaps.pop();   // 该快照已交给 undoCtx，避免悔棋栈重复回退
     if (g.cfg.play === 'ai') {
       this.endGame(winner, (moverSide === 'red' ? '红方' : '黑方') + '误吃己方将帅（人机不提供协商，判负）');
       return;
@@ -312,6 +325,85 @@ Page({
     this.endGame(opp(ctx.moverSide), (ctx.moverSide === 'red' ? '红方' : '黑方') + '误吃己方将帅，赢方不同意悔棋，判负');
   },
 
+  /* ================= 悔棋 / 让一手（协商） ================= */
+  /** 回退最近半回合；翻开过的棋子信息不回滚 */
+  revertOne(): boolean {
+    const g = this.G;
+    const snap = this.snaps.pop();
+    if (!g || !snap) return false;
+    g.pieces = snap.pieces.map(q => ({ ...q, pos: q.pos ? { ...q.pos } : null }));
+    g.turn = snap.turn; g.noCap = snap.noCap; g.moveNum = snap.moveNum;
+    g.lastMove = snap.lastMove ? { from: { ...snap.lastMove.from }, to: { ...snap.lastMove.to } } : null;
+    g.history.pop();
+    g.repMap = {};
+    for (const e2 of g.history) g.repMap[e2.hash] = (g.repMap[e2.hash] || 0) + 1;
+    if (snap.flippedId) {
+      const fp = g.pieces.find(q => q.id === snap.flippedId);
+      if (fp) fp.revealed = true;   // 已公开翻明的暗子保持翻开
+    }
+    g.selected = null;
+    this.dyingPos = {}; this.dyingOut = {};
+    return true;
+  },
+
+  onUndoTap() {
+    const g = this.G;
+    if (!g || g.over || g.busy || this.undoCtx || this.askCtx) return;
+    if (!this.snaps.length) { this.showToast('没有可悔的着法'); return; }
+    if (g.cfg.play === 'hot') {
+      const req = opp(g.turn);   // 刚走完一手的一方发起悔棋
+      this.askCtx = 'undo';
+      this.setData({ showAsk: true, askText: (req === 'red' ? '红方' : '黑方') + '请求悔棋一步。\n请' + (g.turn === 'red' ? '红方' : '黑方') + '（对方）选择是否同意。' });
+      return;
+    }
+    // 陪练模式：直接撤销到玩家行棋（AI 已应手则连 AI 一起撤）
+    const n = g.turn === 'red' ? 2 : 1;
+    let done = false;
+    for (let i = 0; i < n && this.snaps.length; i++) done = this.revertOne() || done;
+    if (!done) return;
+    g.busy = false;
+    this.showToast('已悔棋，重新行棋');
+    this.render();
+  },
+
+  onPassTap() {
+    const g = this.G;
+    if (!g || g.over || g.busy || this.undoCtx || this.askCtx || g.cfg.play !== 'hot') return;
+    this.askCtx = 'pass';
+    this.setData({ showAsk: true, askText: (g.turn === 'red' ? '红方' : '黑方') + '请求让一手（跳过本次行棋）。\n请' + (g.turn === 'red' ? '黑方' : '红方') + '（对方）选择是否同意。' });
+  },
+
+  onAskYes() {
+    const type = this.askCtx;
+    this.askCtx = null;
+    this.setData({ showAsk: false });
+    const g = this.G;
+    if (!g || g.over) return;
+    if (type === 'undo') {
+      if (!this.revertOne()) return;
+      g.busy = false;
+      this.showToast('已悔一步，' + (g.turn === 'red' ? '红方' : '黑方') + '重新行棋');
+      this.render();
+    } else if (type === 'pass') {
+      const from = g.turn;
+      g.turn = opp(g.turn);
+      g.moveNum++;
+      this.showToast((from === 'red' ? '红方' : '黑方') + '让一手');
+      this.render();
+      if (!hasLegal(g, g.turn)) {
+        this.endGame(from, (g.turn === 'red' ? '红方' : '黑方') + '无子可动');
+        return;
+      }
+      g.busy = false;
+      this.render();
+    }
+  },
+
+  onAskNo() {
+    this.askCtx = null;
+    this.setData({ showAsk: false });
+  },
+
   /* ================= 终局 ================= */
   endGame(winner: Side | null, reason: string) {
     const g = this.G;
@@ -328,13 +420,22 @@ Page({
       showEnd: false
     });
     const ep = this.epoch;
-    setTimeout(() => { if (this.G && ep === this.epoch) this.setData({ showEnd: true }); }, 900);
+    setTimeout(() => { if (this.G && ep === this.epoch) this.setData({ showEnd: true }); }, 2200);   // 留时间看清最后一手
+  },
+
+  /** 终局弹窗「查看棋局」：关闭弹窗回看终局面 */
+  onViewBoard() {
+    this.setData({ showEnd: false, showEndBar: true });
+  },
+  /** 回看时悬浮条「结果」：重新打开终局弹窗 */
+  onEndReopen() {
+    this.setData({ showEndBar: false, showEnd: true });
   },
 
   /* ================= 随机陪练 ================= */
   aiMove() {
     const g = this.G;
-    if (!g || g.over || g.busy) return;
+    if (!g || g.over || g.busy || g.turn !== 'black') return;   // turn 校验：悔棋后遗留的定时器直接作废
     const mv = pickAIMove(g);
     if (!mv) return;
     this.tryMove(mv.p, mv.t);
@@ -373,7 +474,7 @@ Page({
 
   vibrate(type: 'light' | 'medium' | 'heavy') {
     if (!this.data.vibOn) return;   // 用户已关闭震动
-    // 仅关键事件震动：吃子 medium / 将军 medium / 终局 heavy；普通走子不震
+    // 选中/走子/翻子 light · 吃子/将军 medium · 终局 heavy
     // 部分安卓机型/基础库对 vibrateShort 带 type 参数会直接 fail，失败时回退 vibrateLong 保证有震感
     try {
       wx.vibrateShort({

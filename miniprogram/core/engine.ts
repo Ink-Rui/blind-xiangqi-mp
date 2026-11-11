@@ -203,15 +203,16 @@ export function pseudoMoves(g: PositionSnapshot, p: Piece): Pos[] {
   return out;
 }
 
-/** 暗子不可吃操作方已翻开的同色明子；明子只吃敌方 */
+/** 吃子限制只对「已翻开的子」生效：暗子归属未知，谁都可以吃（可能误吃己方将帅） */
 export function canCapture(g: PositionSnapshot, mover: Piece, tp?: Piece | null): boolean {
   if (!tp) return true;
+  if (!tp.revealed) return true;                  // 目标是暗子：身份未知，允许吃（翻开才知道吃到了谁）
   if (!mover.revealed) {
     if (!mover.pos) return false;
     const op = halfOwner(mover.pos);
-    return !(tp.revealed && tp.color === op);
+    return tp.color !== op;                       // 暗子不可吃所在半盘操作方已翻开的同色明子
   }
-  return tp.color !== mover.color;
+  return tp.color !== mover.color;                // 明子不可吃己方明子
 }
 
 /** 模拟走子（含自动翻开），用于将军安全性检查 */
@@ -279,7 +280,7 @@ const AI_VALUE: Record<PieceType, number> = { K: 1000, R: 90, C: 45, N: 40, B: 2
 function isCapturable(g: PositionSnapshot, target: Piece, side: Side): boolean {
   if (!target.pos) return false;
   for (const q of g.pieces) {
-    if (q.captured || q.color === side || !q.pos) continue;
+    if (q.captured || q.color !== side || !q.pos) continue;
     if (!operable(g, q, side)) continue;
     if (pseudoMoves(g, q).some(t2 => t2.r === target.pos!.r && t2.c === target.pos!.c) &&
         canCapture(g, q, target)) return true;
@@ -287,26 +288,102 @@ function isCapturable(g: PositionSnapshot, target: Piece, side: Side): boolean {
   return false;
 }
 
-/** hard 难度单步评估：吃子价值 - 被吃风险 + 翻子/推进/将军小分 - 重复局面罚分 */
+/** 己方是否有子能吃回 target 所在格（几何意义上的保护） */
+function isDefended(g: PositionSnapshot, target: Piece, side: Side): boolean {
+  if (!target.pos) return false;
+  for (const q of g.pieces) {
+    if (q.captured || q.color !== side || !q.pos || q.id === target.id) continue;
+    if (!operable(g, q, side)) continue;
+    if (pseudoMoves(g, q).some(t2 => t2.r === target.pos!.r && t2.c === target.pos!.c)) return true;
+  }
+  return false;
+}
+
+/** 攻击 target 的对方子中最便宜的价值（暗子按期望价值计） */
+function minAttackerValue(g: PositionSnapshot, target: Piece, side: Side, darkEV: number): number {
+  if (!target.pos) return Infinity;
+  let mn = Infinity;
+  let hasDark = false;
+  for (const q of g.pieces) {
+    if (q.captured || q.color !== side || !q.pos) continue;
+    if (!operable(g, q, side)) continue;
+    if (!pseudoMoves(g, q).some(t2 => t2.r === target.pos!.r && t2.c === target.pos!.c) ||
+        !canCapture(g, q, target)) continue;
+    if (q.revealed) mn = Math.min(mn, AI_VALUE[q.type]);
+    else hasDark = true;
+  }
+  if (hasDark) mn = Math.min(mn, darkEV);
+  return mn;
+}
+
+/** hard 难度单步评估（不偷看暗子身份，只用双方都可推算的信息做期望定价）：
+ *  吃子价值 - 保护感知被吃风险 + 翻子归属/推进/将军小分 - 重复局面罚分 */
 function aiScore(g: GameState, m: { p: Piece; t: Pos }, side: Side): number {
   const { p, t } = m;
   const from = p.pos!;
   const enemy = opp(side);
   let s = Math.random() * 1.5;                 // 少量随机，避免走出死循环
+
+  // 可观测统计：存留暗子集合（明子身份公开、被吃子公告过，双方都能数出各方剩余暗子数）
+  const H = g.pieces.filter(q => !q.captured && !q.revealed && q.pos);
+  const N = H.length || 1;
+  const myHArr = H.filter(q => q.color === side);
+  const enHArr = H.filter(q => q.color !== side);
+  const myH = myHArr.length, enH = enHArr.length;
+  const sumV = (arr: Piece[]) => arr.reduce((a, q) => a + AI_VALUE[q.type], 0);
+  const myK = g.pieces.find(q => q.type === 'K' && q.color === side && !q.captured);
+  const kHidden = !!(myK && !myK.revealed);
+  const enK = g.pieces.find(q => q.type === 'K' && q.color === enemy && !q.captured);
+  const enKHidden = !!(enK && !enK.revealed);
+  const myAvgNoK = (myH - (kHidden ? 1 : 0)) > 0 ? (sumV(myHArr) - (kHidden ? AI_VALUE.K : 0)) / (myH - (kHidden ? 1 : 0)) : 0;
+  const enAvgNoK = (enH - (enKHidden ? 1 : 0)) > 0 ? (sumV(enHArr) - (enKHidden ? AI_VALUE.K : 0)) / (enH - (enKHidden ? 1 : 0)) : 0;
+  const enAvg = enH ? sumV(enHArr) / enH : 0;
+  const pMine = myH / N;                       // 操作中的暗子翻开后属于己方的概率
+  const pEnemy = enH / N;
+
   const target = pieceAt(g, t);
   if (target) {
-    // 明子按真实身份计价值；暗子身份未知，按平均子力估计（鼓励适度吃暗子换信息）
-    s += target.revealed ? AI_VALUE[target.type] : 50;
+    if (target.revealed) {
+      s += AI_VALUE[target.type];
+      if (target.type === 'K') s += 4000;   // 吃对方明将 → 直接获胜
+      s += 30;                              // 交战倾向：鼓励主动
+    } else {
+      // 吃暗子期望定价：敌子收益 − 误吃己方子损失 − 误吃己方暗将(判负)风险 + 命中对方暗将(直接获胜)收益 + 交战倾向
+      s += ((enH - (enKHidden ? 1 : 0)) / N) * enAvgNoK;
+      s -= ((myH - (kHidden ? 1 : 0)) / N) * myAvgNoK;
+      if (enKHidden) s += 2500 / N;
+      if (kHidden) s -= 2500 / N;
+      s += 15;
+    }
   }
   const after = simMove(g, p, t);              // simMove 会把走子方翻明
-  // 走完暴露在对方火力下 → 按自身（已翻明）价值扣分，不白送
+  if (!p.revealed) {
+    // 翻明的归属定价：翻到己方色 → 己方多得一个明子；翻到对方色 → 送给对方（期望损失）
+    s += pMine * 12 - pEnemy * enAvg * 0.3;
+  }
+  // 走完暴露在对方火力下 → 保护感知定价：有保护只计「换子亏损」，无保护全额计险
   const moved = after.pieces.find(q => q.id === p.id)!;
-  if (isCapturable(after, moved, enemy)) s -= AI_VALUE[p.type] * 0.9;
-  // 己方明将暴露在对方火力下 → 重罚（送将）
-  const myK = after.pieces.find(q => q.type === 'K' && q.color === side && !q.captured && q.revealed);
-  if (myK && myK.pos && isCapturable(after, myK, enemy)) s -= 800;
+  const movedAtRisk = isCapturable(after, moved, enemy);
+  if (movedAtRisk) {
+    const riskV = p.revealed ? AI_VALUE[p.type] : (myH / N) * myAvgNoK;
+    const defended = isDefended(after, moved, side);
+    const atkV = minAttackerValue(after, moved, enemy, enAvgNoK);
+    const cost = defended ? Math.max(0, riskV - atkV) : riskV;
+    s -= cost * 0.8;
+    if (!p.revealed && kHidden) s -= 2000 / N;   // 若翻出的恰是己方暗将且落点被攻击 → 判负风险
+  }
+  // 威胁对方明将：下一步即可斩将 → 奖励；但攻击子自身悬在外面时不算威胁（否则是白送）
+  const enKr = after.pieces.find(q => q.type === 'K' && q.color === enemy && !q.captured && q.revealed);
+  if (enKr && enKr.pos && isCapturable(after, enKr, side) && !movedAtRisk) s += 150;
+  // 己方明将安全：相对基线（走之前本就被攻击不重复罚；新增攻击重罚；解脱攻击奖励）
+  const myKrNow = g.pieces.find(q => q.type === 'K' && q.color === side && !q.captured && q.revealed);
+  const dBefore = !!(myKrNow && myKrNow.pos && isCapturable(g, myKrNow, enemy));
+  const myKrAfter = after.pieces.find(q => q.type === 'K' && q.color === side && !q.captured && q.revealed);
+  const dAfter = !!(myKrAfter && myKrAfter.pos && isCapturable(after, myKrAfter, enemy));
+  if (dAfter && !dBefore) s -= 800;
+  if (!dAfter && dBefore) s += 500;
   if (!p.revealed) s += g.moveNum <= 20 ? 3 : 1;   // 早翻子：换取信息与操作权
-  s += (side === 'black' ? t.r - from.r : from.r - t.r) * 0.4;   // 向对方半盘推进
+  s += (side === 'black' ? t.r - from.r : from.r - t.r) * 0.1;   // 向对方半盘推进（弱：推进会让出狙击线）
   if (g.cfg.rule === 'check' && inCheck(after, enemy)) s += 12;
   // 避免第三次重复局面（长将判罚/无吃子判和都吃亏）
   const h = after.pieces.map(q => q.id + ':' + (q.pos ? q.pos.r + '_' + q.pos.c : 'x') + (q.revealed ? 1 : 0)).join('|') + '#' + enemy;
@@ -314,7 +391,7 @@ function aiScore(g: GameState, m: { p: Piece; t: Pos }, side: Side): number {
   return s;
 }
 
-/** 陪练走子：easy 纯随机 / normal 60% 偏好吃子 / hard 启发式评估（side 供 AI 对 AI 压测） */
+/** 陪练走子：easy 纯随机 / normal 60% 偏好吃子 / hard 期望定价单层评估（不偷看暗子身份） */
 export function pickAIMove(g: GameState, side: Side = 'black'): { p: Piece; t: Pos } | null {
   const all: { p: Piece; t: Pos }[] = [];
   for (const q of g.pieces) {
@@ -329,7 +406,9 @@ export function pickAIMove(g: GameState, side: Side = 'black'): { p: Piece; t: P
     if (caps.length && Math.random() < 0.6) return caps[Math.floor(Math.random() * caps.length)];
     return all[Math.floor(Math.random() * all.length)];
   }
-  // hard：逐个候选走法打分，取最高分（并列时随机）
+  // hard：可直吃对方明将先走；否则按单层期望评估选最优（并列随机）
+  const winNow = all.find(m => { const tp = pieceAt(g, m.t); return tp && tp.revealed && tp.type === 'K' && tp.color !== side; });
+  if (winNow) return winNow;
   let best: { p: Piece; t: Pos }[] = [];
   let bestScore = -Infinity;
   for (const m of all) {
