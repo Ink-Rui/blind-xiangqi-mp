@@ -540,7 +540,7 @@ Page({
       if (this.joinSeq !== seq) return;   // 已离房或重新进房：丢弃旧结果
       if (!res.ok) {
         // 网络抖动自动重试两次；房间不存在/已满等业务失败直接提示
-        const transient = /网络|超时|服务器返回异常|暂不可用/.test(res.msg || '');
+        const transient = /网络|超时|服务繁忙|服务器返回异常|暂不可用/.test(res.msg || '');
         if (transient && attempt < 2) {
           this.setData({ netText: '连接失败，正在重试（' + (attempt + 1) + '/2）…' });
           setTimeout(() => {

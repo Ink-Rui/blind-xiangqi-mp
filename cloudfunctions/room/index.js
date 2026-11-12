@@ -528,9 +528,9 @@ exports.main = async (event) => {
     return await fn(event, OPENID);
   } catch (e) {
     if (e && e.friendly) return { ok: false, msg: e.message };
-    // 非预期异常：把原始信息带回一小段，方便排查（好友间的小程序，不涉及敏感数据）
-    const detail = String((e && (e.errMsg || e.message)) || e || '').slice(0, 120);
+    // 非预期异常：细节只进云函数日志，返回给客户端的文案保持友好
+    const detail = String((e && (e.errMsg || e.message)) || e || '').slice(0, 200);
     console.error('[room] uncaught', action, detail, e && e.stack);
-    return { ok: false, msg: '服务异常：' + detail };
+    return { ok: false, msg: '服务繁忙，请稍后重试' };
   }
 };
