@@ -67,6 +67,9 @@ Page({
   netTimer: 0,
   polling: false,
   syncing: false,
+  netFail: 0,                            // 同步连续失败次数，>0 表示正在重连
+  offPts: 0,                             // 对方开始离线的时刻，用于显示已离线时长
+  joinSeq: 0,                            // 进房序号：离开页面或重新进房时作废遗留的重试
   currentAsk: null as RoomAsk | null,
 
   onLoad(opts: Record<string, string | undefined>) {
@@ -83,9 +86,14 @@ Page({
   },
 
   onShow() {
-    if (this.data.online && this.roomCode && this.role && !this.polling) { this.startPoll(); this.syncOnce(); }
+    if (!this.data.online || !this.roomCode || !this.role) return;
+    // 从后台切回：后台期间轮询已停、心跳中断，回来立即补一次同步并清掉旧的重连计数
+    this.netFail = 0;
+    if (!this.polling) this.startPoll();
+    else this.syncOnce();
   },
   onHide() {
+    // 只停轮询：服务端 12 秒收不到心跳会把我们标记为离线，回到前台由 onShow 续上
     if (this.data.online) this.stopPoll();
   },
   onUnload() {
@@ -196,6 +204,7 @@ Page({
     if (!p || !p.pos) return;
     if (g.cfg.play === 'ai' && g.turn === 'black') { this.showToast('陪练思考中…'); return; }
     if (this.data.online) {
+      if (this.netFail) { this.showToast('网络异常，正在重连…'); return; }
       if (this.currentAsk) { this.showToast('请先处理协商请求'); return; }
       if (this.role && g.turn !== this.role) { this.showToast('等待对方走棋'); return; }
     }
@@ -510,33 +519,53 @@ Page({
   },
 
   /* ================= 联机 ================= */
-  /** 进房：走 join 动作，房主重进也会命中原座位 */
-  startOnline(rawCode: string) {
+  /** 进房：走 join 动作，房主重进也会命中原座位；网络类失败自动重试 */
+  startOnline(rawCode: string, attempt = 0) {
+    const seq = ++this.joinSeq;
     this.epoch++;
     this.roomCode = String(rawCode || '').toUpperCase().replace(/[^0-9A-Z]/g, '');
     this.G = null;
     this.role = '';
     this.ver = 0;
+    this.netFail = 0;
+    this.offPts = 0;
     this.currentAsk = null;
     this.snaps = [];
     this.setData({
-      online: true, roomCode: this.roomCode, onlineWait: true, netText: '连接中…',
+      online: true, roomCode: this.roomCode, onlineWait: true, netText: attempt ? '正在重试连接…' : '连接中…',
       oppOffline: false, showEnd: false, showEndBar: false, showUndo: false,
       showAsk: false, showRules: false, canUndo: false, canPass: false
     });
     callRoom('join', { code: this.roomCode }).then(res => {
+      if (this.joinSeq !== seq) return;   // 已离房或重新进房：丢弃旧结果
       if (!res.ok) {
+        // 网络抖动自动重试两次；房间不存在/已满等业务失败直接提示
+        const transient = /网络|超时|服务器返回异常|暂不可用/.test(res.msg || '');
+        if (transient && attempt < 2) {
+          this.setData({ netText: '连接失败，正在重试（' + (attempt + 1) + '/2）…' });
+          setTimeout(() => {
+            if (this.joinSeq === seq) this.startOnline(rawCode, attempt + 1);
+          }, 800 * (attempt + 1));
+          return;
+        }
         this.setData({ onlineWait: false, netText: '' });
         wx.showModal({
-          title: '无法进入房间', content: res.msg || '房间不可用', showCancel: false,
-          success: () => this.leavePage()
+          title: transient ? '连接失败' : '无法进入房间',
+          content: res.msg || '房间不可用',
+          confirmText: transient ? '重试' : '知道了',
+          showCancel: transient,
+          cancelText: '返回',
+          success: (r: any) => {
+            if (r.confirm && transient) this.startOnline(rawCode, 0);
+            else this.leavePage();
+          }
         });
         return;
       }
       this.role = res.role || '';
       this.ver = res.version || 1;
       if (res.state) this.G = this.toG(res.state);
-      this.setData({ onlineWait: res.status === 'waiting' });
+      this.setData({ onlineWait: res.status === 'waiting', netText: '' });
       this.render();
       this.startPoll();
       if (res.status !== 'waiting' && this.G) {
@@ -576,7 +605,9 @@ Page({
       if (!this.polling) return;
       this.syncOnce().then(() => {
         if (!this.polling) return;
-        const wait = this.data.onlineWait ? 1800 : (this.G && this.G.over ? 4000 : 1300);
+        let wait = this.data.onlineWait ? 1800 : (this.G && this.G.over ? 4000 : 1300);
+        // 断线退避：1s → 2s → 4s → 6s，恢复后回到正常节奏
+        if (this.netFail > 0) wait = Math.min(1000 * Math.pow(2, this.netFail - 1), 6000);
         this.netTimer = setTimeout(tick, wait) as unknown as number;
       });
     };
@@ -593,18 +624,42 @@ Page({
     return callRoom('sync', { code: this.roomCode, since: this.ver }).then(res => {
       this.syncing = false;
       if (!res.ok) {
-        this.setData({ netText: res.msg || '连接中断，正在重试…' });
+        this.netFail++;
+        this.setData({ netText: this.netHint() });
         return;
+      }
+      // 从断线状态恢复：明确提示一次
+      if (this.netFail > 0) {
+        this.netFail = 0;
+        this.showToast('已重新连接', '', 1500);
       }
       this.onSync(res);
     });
+  },
+
+  /** 状态条网络提示：重连中 > 对方离线 > 无 */
+  netHint(): string {
+    if (this.netFail > 0) {
+      return this.netFail > 1 ? '网络异常，正在重连（第 ' + this.netFail + ' 次）…' : '网络异常，正在重连…';
+    }
+    if (this.offPts) {
+      const sec = Math.max(1, Math.round((Date.now() - this.offPts) / 1000));
+      return '对方已离线 ' + sec + ' 秒，等待重连…';
+    }
+    return '';
   },
 
   onSync(res: RoomRes) {
     if (res.role) this.role = res.role;
     const waiting = res.status === 'waiting';
     const offline = !waiting && res.oppOnline === false;
-    this.setData({ onlineWait: waiting, oppOffline: offline, netText: waiting ? '' : (offline ? '对方暂时离线…' : '') });
+    if (!waiting && offline) {
+      if (!this.offPts) this.offPts = Date.now();
+    } else if (this.offPts) {
+      this.offPts = 0;
+      if (!waiting) this.showToast('对方已重新连接', '', 1500);
+    }
+    this.setData({ onlineWait: waiting, oppOffline: offline, netText: this.netHint() });
     if (waiting) return;
     if (typeof res.version === 'number' && res.version > this.ver) {
       this.ver = res.version;
@@ -622,6 +677,7 @@ Page({
     this.currentAsk = ask;
     if (!ask) {
       if (this.data.showAsk || this.data.showUndo) this.setData({ showAsk: false, showUndo: false });
+      this.setData({ netText: this.netHint() });   // 不要盖掉「重连中 / 对方离线」提示
     } else if (ask.decider === this.role) {
       if (ask.type === 'miseat') {
         this.setData({
@@ -641,6 +697,7 @@ Page({
   },
 
   sendAsk(type: 'undo' | 'pass') {
+    if (this.netFail) { this.showToast('网络异常，正在重连…'); return; }
     this.setData({ netText: type === 'undo' ? '发送悔棋请求…' : '发送让一手请求…' });
     callRoom('ask', { code: this.roomCode, type }).then(res => {
       if (!res.ok) { this.setData({ netText: '' }); this.showToast(res.msg || '请求发送失败'); return; }
@@ -660,11 +717,12 @@ Page({
       if (!res.ok) {
         this.showToast(res.msg || '提交失败');
         this.handleAsk(ask);
+        this.syncOnce();   // 可能实际已生效：拉一次最新状态，避免弹窗与服务端不一致
         return;
       }
       if (typeof res.version === 'number') this.ver = res.version;
       this.applyRemote(res, false);
-      this.setData({ netText: '' });
+      this.setData({ netText: this.netHint() });
       if (res.events && res.events.length) this.showToast(res.events[res.events.length - 1].text || '', '', 2000);
       this.handleAsk(res.ask || null);
     });
@@ -683,11 +741,13 @@ Page({
         this.showToast(res.msg || '走子失败');
         this.setData({ netText: '' });
         if (this.G) { this.G.busy = false; this.render(); }
+        // 失败原因可能是响应丢失导致本地与服务端不一致，立刻补一次同步对齐
+        this.syncOnce();
         return;
       }
       const animate = res.lastAction === 'move' && (res.version || 0) > this.ver;
       if (typeof res.version === 'number') this.ver = res.version;
-      this.setData({ netText: '' });
+      this.setData({ netText: this.netHint() });
       this.applyRemote(res, animate);
       this.handleAsk(res.ask || null);
     });
@@ -700,7 +760,9 @@ Page({
     const old = this.G;
     const alreadyOver = !!old && old.over;
     // 心跳也会推高版本号，只有 moveNum 真的变了才是新的一步，避免重复播放动画
-    const animate = animateFlag && !!old && !alreadyOver && st.moveNum !== old.moveNum;
+    // 断线期间错过不止一步时直接对齐最新局面，不再补播动画
+    const stepGap = old ? st.moveNum - old.moveNum : 0;
+    const animate = animateFlag && !!old && !alreadyOver && stepGap === 1;
     const oldPieces = old ? old.pieces : [];
     const g = this.toG(st);
     const ep = this.epoch;
@@ -821,6 +883,7 @@ Page({
 
   /** 离开对局页：正常返回上一页；从分享卡片直接进入（无上一页）时回首页 */
   leavePage() {
+    this.joinSeq++;   // 作废还在等待的重试
     this.stopPoll();
     if (getCurrentPages().length > 1) wx.navigateBack();
     else wx.reLaunch({ url: '/pages/index/index' });

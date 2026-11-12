@@ -162,6 +162,7 @@ async function cmdJoin(ev, openid) {
   const room = await getRoom(code);
   if (room.status === 'over') err('这局已经结束了');
   let role = seatRole(room, openid);
+  const rejoin = !!role;                 // 已占座：说明是重进房间（断线重连也算）
   if (!role) {
     if (!room.seats.red) role = 'red';
     else if (!room.seats.black) role = 'black';
@@ -178,6 +179,10 @@ async function cmdJoin(ev, openid) {
     patch.status = 'playing';
     patch.lastAction = 'join';
     patch.events = withEvent(room, '双方已就位，' + sideName(role) + '加入对局', '');
+  } else if (rejoin && room.status === 'playing') {
+    // 断线重连：通知对手我已回到房间（lastAction 用 join，客户端不会补播走子动画）
+    patch.lastAction = 'join';
+    patch.events = withEvent(room, '对方已重新连接', '');
   }
   await save(room, patch);
   return snapshot(room, role);
