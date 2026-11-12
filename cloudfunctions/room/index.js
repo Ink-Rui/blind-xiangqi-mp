@@ -9,6 +9,7 @@ const E = require('./engine');
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 const db = cloud.database();
 const rooms = db.collection('rooms');
+const _ = db.command;
 
 const CODE_CHARS = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';   // 去掉易混淆的 0/O/1/I
 const MAX_SNAPS = 8;
@@ -57,6 +58,25 @@ async function getRoom(code) {
   const r = await rooms.doc(code).get().catch(() => null);
   if (!r || !r.data) err('房间不存在或已过期');
   return r.data;
+}
+
+/**
+ * 清理过期房间：结束超过 1 小时、等人超过 3 小时、双方都掉线超过 30 分钟。
+ * 没有定时器，借建房时顺手做一次，量很小（每次最多删 20 条）。
+ */
+async function cleanup() {
+  try {
+    const now = Date.now();
+    const ids = [];
+    const collect = async (where) => {
+      const r = await rooms.where(where).limit(20).get();
+      (r.data || []).forEach((d) => ids.push(d._id));
+    };
+    await collect({ status: 'over', updatedAt: _.lt(now - 3600e3) });
+    await collect({ status: 'waiting', createdAt: _.lt(now - 3 * 3600e3) });
+    await collect({ status: 'playing', 'seen.red': _.lt(now - 1800e3), 'seen.black': _.lt(now - 1800e3) });
+    if (ids.length) await rooms.where({ _id: _.in(ids) }).remove();
+  } catch (e) { /* 清理失败不影响建房 */ }
 }
 
 /** 带版本号的写入：版本不一致说明另一端已抢先提交，直接判为冲突 */
@@ -115,6 +135,12 @@ function snapshot(room, role) {
 /* ================= 动作 ================= */
 
 async function cmdCreate(ev, openid) {
+  const res = await doCreate(ev, openid);
+  await cleanup();   // 顺手清理过期房间（失败不影响建房）
+  return res;
+}
+
+async function doCreate(ev, openid) {
   const cfg = sanitizeCfg(ev.cfg);
   // 直接尝试写入房间文档：撞号换一个码；集合不存在则建表后用同一码重试
   for (let i = 0; i < 6; i++) {
