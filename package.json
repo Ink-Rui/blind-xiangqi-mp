@@ -4,7 +4,8 @@
   "private": true,
   "description": "盲下象棋 · 微信小程序（原生 + TypeScript）",
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:engine": "tsc miniprogram/core/engine.ts --module commonjs --target ES2020 --lib ES2020 --outDir cloudfunctions/room --removeComments --skipLibCheck"
   },
   "devDependencies": {
     "typescript": "^5.5.4"

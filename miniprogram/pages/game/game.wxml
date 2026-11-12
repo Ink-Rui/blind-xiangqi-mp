@@ -3,12 +3,14 @@
     <view class="h-title">对局中<text class="h-sub">V1 核心玩法 · 暗子走完翻开</text></view>
     <view class="hbtn" bindtap="onRulesOpen">规则</view>
     <view class="hbtn {{vibOn ? '' : 'muted'}}" bindtap="onToggleVib">{{vibOn ? '震动开' : '震动关'}}</view>
-    <view class="hbtn accent" bindtap="onRestart">重开</view>
+    <view class="hbtn" wx:if="{{online && status.turnCls !== 'over'}}" bindtap="onResign">认输</view>
+    <view class="hbtn accent" bindtap="onRestart">{{online ? '退出' : '重开'}}</view>
   </view>
 
   <view class="status">
     <view class="turn {{status.turnCls}}">{{status.turnText}}</view>
     <view class="chip chk" wx:if="{{status.check}}">将军！</view>
+    <view class="chip" wx:if="{{netText}}">{{netText}}</view>
     <view class="chip">{{status.modeText}}</view>
     <view class="chip">{{status.moveText}}</view>
     <view class="chip">{{status.noCapText}}</view>
@@ -83,6 +85,19 @@
   <view class="notes">规则要点：暗子按所在位置走法行棋，走完翻开；明子暗子均可吃暗子（可能误吃己方将帅 → 赢方选择悔棋或判负）；无合法走法判负；120 半回合无吃子判和。</view>
 </view>
 
+<!-- 联机：等待好友加入 -->
+<view class="ov {{onlineWait ? '' : 'hide'}}">
+  <view class="panel">
+    <view class="panel-title">等待好友加入</view>
+    <view class="panel-sub center">房间码</view>
+    <view class="room-code" bindtap="onCopyCode">{{roomCode}}</view>
+    <view class="panel-sub center">把房间码报给好友，或直接转发邀请卡片</view>
+    <button class="big share" open-type="share">邀请微信好友</button>
+    <view class="big gray" bindtap="onCopyCode">复制房间码</view>
+    <view class="big gray" bindtap="onQuitRoom">关闭房间</view>
+  </view>
+</view>
+
 <!-- 协商：悔棋 / 让一手 -->
 <view class="ov {{showAsk ? '' : 'hide'}}">
   <view class="panel">
@@ -109,16 +124,17 @@
     <view class="result {{endTitleCls}}">{{endTitle}}</view>
     <view class="end-reason">{{endReason}}</view>
     <view class="panel-sub center">棋盘上全部暗子已翻开，可回看本局的偶然性</view>
-    <view class="big" bindtap="onAgain">再来一局（重新洗牌）</view>
+    <view class="big" wx:if="{{!online}}" bindtap="onAgain">再来一局（重新洗牌）</view>
     <view class="big gray" bindtap="onViewBoard">查看棋局</view>
-    <view class="big gray" bindtap="onBackSetup">更改设置</view>
+    <view class="big gray" bindtap="onBackSetup">{{online ? '返回首页' : '更改设置'}}</view>
   </view>
 </view>
 
 <!-- 终局回看悬浮条 -->
 <view class="endbar {{showEndBar ? '' : 'hide'}}">
   <view class="ebtn" bindtap="onEndReopen">结果</view>
-  <view class="ebtn primary" bindtap="onAgain">再来一局</view>
+  <view class="ebtn primary" wx:if="{{!online}}" bindtap="onAgain">再来一局</view>
+  <view class="ebtn" wx:if="{{online}}" bindtap="onBackSetup">返回首页</view>
 </view>
 
 <!-- 规则 -->

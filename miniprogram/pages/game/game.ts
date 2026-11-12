@@ -4,6 +4,7 @@ import {
   newGameState, hashState, pieceAt, legalTargets, operable, inCheck, hasLegal,
   clonePieces, pickAIMove
 } from '../../core/engine';
+import { callRoom, RoomAsk, RoomRes, RoomState } from '../../core/net';
 
 /** 渲染视图模型：WXML 数据驱动的轻量棋子快照 */
 interface VMPiece {
@@ -22,8 +23,9 @@ const PLAYS = ['hot', 'ai'];
 const LEVELS = ['easy', 'normal', 'hard'];
 const MODE_TEXT: Record<string, string> = { A1: 'A1 半盘内洗', A2: 'A2 跨河全混', B: 'B 全盘混洗' };
 const RULE_TEXT: Record<string, string> = { check: '将军规则', kill: '吃将即胜' };
-const PLAY_TEXT: Record<string, string> = { hot: '同屏', ai: '陪练' };
+const PLAY_TEXT: Record<string, string> = { hot: '同屏', ai: '陪练', online: '联机' };
 const LEVEL_TEXT: Record<string, string> = { easy: '简单', normal: '普通', hard: '困难' };
+const sideName = (s: string) => (s === 'red' ? '红方' : '黑方');
 
 Page({
   data: {
@@ -40,7 +42,14 @@ Page({
     showRules: false,
     showAsk: false, askText: '',
     canUndo: false, canPass: false,
-    vibOn: true
+    vibOn: true,
+    /* 联机 */
+    online: false,
+    roomCode: '',
+    onlineWait: false,       // 等待对方加入
+    netText: '',
+    oppOffline: false,
+    shareTitle: ''
   },
 
   G: null as GameState | null,
@@ -51,17 +60,47 @@ Page({
   undoCtx: null as UndoCtx | null,
   snaps: [] as UndoCtx['snap'][],        // 悔棋快照栈（每半回合一个，翻开信息不回滚）
   askCtx: null as 'undo' | 'pass' | null,
+  /* 联机状态 */
+  roomCode: '',
+  role: '' as '' | Side,
+  ver: 0,
+  netTimer: 0,
+  polling: false,
+  syncing: false,
+  currentAsk: null as RoomAsk | null,
 
   onLoad(opts: Record<string, string | undefined>) {
+    // 震动开关：本地持久化，默认开
+    this.setData({ vibOn: wx.getStorageSync('vibOn') !== false });
+    if (opts.room) { this.startOnline(opts.room); return; }
     const cfg: Cfg = {
       shuffle: opts.shuffle && SHUFFLES.indexOf(opts.shuffle) >= 0 ? opts.shuffle as Cfg['shuffle'] : 'A1',
       rule: opts.rule && RULES.indexOf(opts.rule) >= 0 ? opts.rule as Cfg['rule'] : 'check',
       play: opts.play && PLAYS.indexOf(opts.play) >= 0 ? opts.play as Cfg['play'] : 'hot',
       level: opts.level && LEVELS.indexOf(opts.level) >= 0 ? opts.level as Cfg['level'] : 'normal'
     };
-    // 震动开关：本地持久化，默认开
-    this.setData({ vibOn: wx.getStorageSync('vibOn') !== false });
     this.startGame(cfg);
+  },
+
+  onShow() {
+    if (this.data.online && this.roomCode && this.role && !this.polling) { this.startPoll(); this.syncOnce(); }
+  },
+  onHide() {
+    if (this.data.online) this.stopPoll();
+  },
+  onUnload() {
+    this.stopPoll();
+    if (this.toastTimer) clearTimeout(this.toastTimer);
+  },
+
+  onShareAppMessage() {
+    if (this.data.online && this.roomCode) {
+      return {
+        title: '来和我下一盘盲棋（房间 ' + this.roomCode + '）',
+        path: '/pages/game/game?room=' + this.roomCode
+      };
+    }
+    return { title: '盲下象棋 · 暗子走完才翻开的象棋', path: '/pages/index/index' };
   },
 
   /* ================= 开局 ================= */
@@ -130,15 +169,22 @@ Page({
       status: {
         turnCls: g.over ? 'over' : g.turn,
         turnText: g.over ? '对局结束'
-          : (g.turn === 'red' ? '红方' : '黑方') + '行棋' + (g.cfg.play === 'ai' && g.turn === 'black' ? '（陪练）' : ''),
+          : this.data.online
+            ? (g.turn === this.role ? '轮到你走棋' : '等待对方走棋')
+            : (g.turn === 'red' ? '红方' : '黑方') + '行棋' + (g.cfg.play === 'ai' && g.turn === 'black' ? '（陪练）' : ''),
         modeText: MODE_TEXT[g.cfg.shuffle] + ' · ' + RULE_TEXT[g.cfg.rule] + ' · ' + PLAY_TEXT[g.cfg.play] +
-          (g.cfg.play === 'ai' ? ' · ' + LEVEL_TEXT[g.cfg.level || 'normal'] : ''),
+          (g.cfg.play === 'ai' ? ' · ' + LEVEL_TEXT[g.cfg.level || 'normal'] : '') +
+          (this.data.online && this.role ? ' · 你执' + (this.role === 'red' ? '红' : '黑') : ''),
         moveText: '第 ' + g.moveNum + ' 手',
         noCapText: '无吃子 ' + g.noCap + '/120',
         check: !g.over && inCheck(g, g.turn)
       },
-      canUndo: !g.over && !g.busy && this.snaps.length > 0 && !this.undoCtx && !this.askCtx,
-      canPass: !g.over && !g.busy && g.cfg.play === 'hot' && !this.undoCtx && !this.askCtx
+      canUndo: this.data.online
+        ? !g.over && !g.busy && !!this.role && this.role === opp(g.turn) && !this.currentAsk
+        : !g.over && !g.busy && this.snaps.length > 0 && !this.undoCtx && !this.askCtx,
+      canPass: this.data.online
+        ? !g.over && !g.busy && !!this.role && this.role === g.turn && !this.currentAsk
+        : !g.over && !g.busy && g.cfg.play === 'hot' && !this.undoCtx && !this.askCtx
     });
   },
 
@@ -149,6 +195,10 @@ Page({
     const p = g.pieces.find(q => q.id === e.currentTarget.dataset.id);
     if (!p || !p.pos) return;
     if (g.cfg.play === 'ai' && g.turn === 'black') { this.showToast('陪练思考中…'); return; }
+    if (this.data.online) {
+      if (this.currentAsk) { this.showToast('请先处理协商请求'); return; }
+      if (this.role && g.turn !== this.role) { this.showToast('等待对方走棋'); return; }
+    }
     const side = g.turn;
     if (!operable(g, p, side)) {
       if (p.revealed) this.showToast('这是' + (p.color === 'red' ? '红' : '黑') + '方的明子，由对方操作');
@@ -174,6 +224,7 @@ Page({
     if (!g || g.busy || g.over) return;
     const legal = legalTargets(g, p);
     if (!legal.some(x => x.r === t.r && x.c === t.c)) return;
+    if (this.data.online) { this.onlineMove(p, t); return; }
     g.busy = true; g.selected = null;
     const ep = this.epoch;
     const wasDark = !p.revealed;
@@ -300,6 +351,7 @@ Page({
   },
 
   onUndoYes() {
+    if (this.data.online) { this.onlineAnswer(true); return; }
     const ctx = this.undoCtx;
     const g = this.G;
     if (!ctx || !g) return;
@@ -319,6 +371,7 @@ Page({
   },
 
   onUndoNo() {
+    if (this.data.online) { this.onlineAnswer(false); return; }
     const ctx = this.undoCtx;
     if (!ctx) return;
     this.setData({ showUndo: false });
@@ -349,6 +402,12 @@ Page({
   onUndoTap() {
     const g = this.G;
     if (!g || g.over || g.busy || this.undoCtx || this.askCtx) return;
+    if (this.data.online) {
+      if (this.currentAsk) { this.showToast('已有待处理的协商请求'); return; }
+      if (this.role !== opp(g.turn)) { this.showToast('要等对方走完一手后再请求悔棋'); return; }
+      this.sendAsk('undo');
+      return;
+    }
     if (!this.snaps.length) { this.showToast('没有可悔的着法'); return; }
     if (g.cfg.play === 'hot') {
       const req = opp(g.turn);   // 刚走完一手的一方发起悔棋
@@ -368,12 +427,20 @@ Page({
 
   onPassTap() {
     const g = this.G;
-    if (!g || g.over || g.busy || this.undoCtx || this.askCtx || g.cfg.play !== 'hot') return;
+    if (!g || g.over || g.busy || this.undoCtx || this.askCtx) return;
+    if (this.data.online) {
+      if (this.currentAsk) { this.showToast('已有待处理的协商请求'); return; }
+      if (g.turn !== this.role) { this.showToast('还没轮到你走棋'); return; }
+      this.sendAsk('pass');
+      return;
+    }
+    if (g.cfg.play !== 'hot') return;
     this.askCtx = 'pass';
     this.setData({ showAsk: true, askText: (g.turn === 'red' ? '红方' : '黑方') + '请求让一手（跳过本次行棋）。\n请' + (g.turn === 'red' ? '黑方' : '红方') + '（对方）选择是否同意。' });
   },
 
   onAskYes() {
+    if (this.data.online) { this.onlineAnswer(true); return; }
     const type = this.askCtx;
     this.askCtx = null;
     this.setData({ showAsk: false });
@@ -400,6 +467,7 @@ Page({
   },
 
   onAskNo() {
+    if (this.data.online) { this.onlineAnswer(false); return; }
     this.askCtx = null;
     this.setData({ showAsk: false });
   },
@@ -441,8 +509,356 @@ Page({
     this.tryMove(mv.p, mv.t);
   },
 
+  /* ================= 联机 ================= */
+  /** 进房：走 join 动作，房主重进也会命中原座位 */
+  startOnline(rawCode: string) {
+    this.epoch++;
+    this.roomCode = String(rawCode || '').toUpperCase().replace(/[^0-9A-Z]/g, '');
+    this.G = null;
+    this.role = '';
+    this.ver = 0;
+    this.currentAsk = null;
+    this.snaps = [];
+    this.setData({
+      online: true, roomCode: this.roomCode, onlineWait: true, netText: '连接中…',
+      oppOffline: false, showEnd: false, showEndBar: false, showUndo: false,
+      showAsk: false, showRules: false, canUndo: false, canPass: false
+    });
+    callRoom('join', { code: this.roomCode }).then(res => {
+      if (!res.ok) {
+        this.setData({ onlineWait: false, netText: '' });
+        wx.showModal({
+          title: '无法进入房间', content: res.msg || '房间不可用', showCancel: false,
+          success: () => this.leavePage()
+        });
+        return;
+      }
+      this.role = res.role || '';
+      this.ver = res.version || 1;
+      if (res.state) this.G = this.toG(res.state);
+      this.setData({ onlineWait: res.status === 'waiting' });
+      this.render();
+      this.startPoll();
+      if (res.status !== 'waiting' && this.G) {
+        this.showToast('你执' + (this.role === 'red' ? '红' : '黑') + '，' + (this.G.turn === this.role ? '轮到你走棋' : '等待对方走棋'), '', 2200);
+      }
+    });
+  },
+
+  /** 服务端棋局 → 本地 GameState（不含历史表，客户端只负责渲染与合法走法提示） */
+  toG(st: RoomState): GameState {
+    return {
+      cfg: {
+        shuffle: st.cfg.shuffle as Cfg['shuffle'],
+        rule: st.cfg.rule as Cfg['rule'],
+        play: 'online' as Cfg['play'],
+        level: 'normal' as Cfg['level']
+      },
+      pieces: st.pieces.map((q: any) => ({ ...q, pos: q.pos ? { r: q.pos.r, c: q.pos.c } : null })),
+      turn: st.turn,
+      moveNum: st.moveNum,
+      noCap: st.noCap,
+      over: st.over,
+      winner: st.winner,
+      reason: st.reason,
+      lastMove: st.lastMove ? { from: { ...st.lastMove.from }, to: { ...st.lastMove.to } } : null,
+      history: [],
+      repMap: {},
+      selected: null,
+      busy: false
+    } as GameState;
+  },
+
+  startPoll() {
+    this.stopPoll();
+    this.polling = true;
+    const tick = () => {
+      if (!this.polling) return;
+      this.syncOnce().then(() => {
+        if (!this.polling) return;
+        const wait = this.data.onlineWait ? 1800 : (this.G && this.G.over ? 4000 : 1300);
+        this.netTimer = setTimeout(tick, wait) as unknown as number;
+      });
+    };
+    tick();
+  },
+  stopPoll() {
+    this.polling = false;
+    if (this.netTimer) { clearTimeout(this.netTimer); this.netTimer = 0; }
+  },
+
+  syncOnce(): Promise<void> {
+    if (this.syncing || !this.roomCode) return Promise.resolve();
+    this.syncing = true;
+    return callRoom('sync', { code: this.roomCode, since: this.ver }).then(res => {
+      this.syncing = false;
+      if (!res.ok) {
+        this.setData({ netText: res.msg || '连接中断，正在重试…' });
+        return;
+      }
+      this.onSync(res);
+    });
+  },
+
+  onSync(res: RoomRes) {
+    if (res.role) this.role = res.role;
+    const waiting = res.status === 'waiting';
+    const offline = !waiting && res.oppOnline === false;
+    this.setData({ onlineWait: waiting, oppOffline: offline, netText: waiting ? '' : (offline ? '对方暂时离线…' : '') });
+    if (waiting) return;
+    if (typeof res.version === 'number' && res.version > this.ver) {
+      this.ver = res.version;
+      this.applyRemote(res, res.lastAction === 'move');
+    }
+    if (res.events && res.events.length) {
+      const last = res.events[res.events.length - 1];
+      if (last && last.text) this.showToast(last.text, last.cls || '', 2000);
+    }
+    this.handleAsk(res.ask || null);
+  },
+
+  /** 协商请求：只有在轮到自己决定时才弹窗 */
+  handleAsk(ask: RoomAsk | null) {
+    this.currentAsk = ask;
+    if (!ask) {
+      if (this.data.showAsk || this.data.showUndo) this.setData({ showAsk: false, showUndo: false });
+    } else if (ask.decider === this.role) {
+      if (ask.type === 'miseat') {
+        this.setData({
+          showUndo: true,
+          undoText: '对方走子吃掉暗子，翻开后竟是己方「' + ((ask.info && ask.info.kingChar) || '将') + '」。\n请选择：同意则让对方悔一步，不同意则按吃将判负（对方输）。'
+        });
+      } else if (ask.type === 'undo') {
+        this.setData({ showAsk: true, askText: sideName(ask.by) + '请求悔棋一步。\n请' + sideName(ask.decider) + '选择是否同意。' });
+      } else {
+        this.setData({ showAsk: true, askText: sideName(ask.by) + '请求让一手（跳过本次行棋）。\n请' + sideName(ask.decider) + '选择是否同意。' });
+      }
+      this.setData({ netText: '' });
+    } else {
+      this.setData({ netText: '等待对方处理请求…' });
+    }
+    this.render();
+  },
+
+  sendAsk(type: 'undo' | 'pass') {
+    this.setData({ netText: type === 'undo' ? '发送悔棋请求…' : '发送让一手请求…' });
+    callRoom('ask', { code: this.roomCode, type }).then(res => {
+      if (!res.ok) { this.setData({ netText: '' }); this.showToast(res.msg || '请求发送失败'); return; }
+      if (typeof res.version === 'number') this.ver = res.version;
+      this.applyRemote(res, false);
+      this.showToast(type === 'undo' ? '已请求悔棋，等待对方回应' : '已请求让一手，等待对方回应', '', 2000);
+      this.handleAsk(res.ask || null);
+    });
+  },
+
+  onlineAnswer(accept: boolean) {
+    const ask = this.currentAsk;
+    if (!ask) return;
+    this.currentAsk = null;
+    this.setData({ showAsk: false, showUndo: false, netText: '提交中…' });
+    callRoom('answer', { code: this.roomCode, accept }).then(res => {
+      if (!res.ok) {
+        this.showToast(res.msg || '提交失败');
+        this.handleAsk(ask);
+        return;
+      }
+      if (typeof res.version === 'number') this.ver = res.version;
+      this.applyRemote(res, false);
+      this.setData({ netText: '' });
+      if (res.events && res.events.length) this.showToast(res.events[res.events.length - 1].text || '', '', 2000);
+      this.handleAsk(res.ask || null);
+    });
+  },
+
+  onlineMove(p: Piece, t: Pos) {
+    const g = this.G;
+    if (!g || !p.pos) return;
+    const from = { r: p.pos.r, c: p.pos.c };
+    g.busy = true;
+    g.selected = null;
+    this.setData({ netText: '同步中…' });
+    this.render();
+    callRoom('move', { code: this.roomCode, from, to: { r: t.r, c: t.c }, ver: this.ver }).then(res => {
+      if (!res.ok) {
+        this.showToast(res.msg || '走子失败');
+        this.setData({ netText: '' });
+        if (this.G) { this.G.busy = false; this.render(); }
+        return;
+      }
+      const animate = res.lastAction === 'move' && (res.version || 0) > this.ver;
+      if (typeof res.version === 'number') this.ver = res.version;
+      this.setData({ netText: '' });
+      this.applyRemote(res, animate);
+      this.handleAsk(res.ask || null);
+    });
+  },
+
+  /** 应用服务端棋局：animate 时补上落子/吃子/翻开的节奏，保持与同屏模式一致的观感 */
+  applyRemote(res: RoomRes, animateFlag: boolean) {
+    const st = res.state;
+    if (!st) return;
+    const old = this.G;
+    const alreadyOver = !!old && old.over;
+    // 心跳也会推高版本号，只有 moveNum 真的变了才是新的一步，避免重复播放动画
+    const animate = animateFlag && !!old && !alreadyOver && st.moveNum !== old.moveNum;
+    const oldPieces = old ? old.pieces : [];
+    const g = this.toG(st);
+    const ep = this.epoch;
+
+    let mover: Piece | null = null;
+    let wasDark = false;
+    if (animate && g.lastMove) {
+      const to = g.lastMove.to;
+      mover = g.pieces.find(q => !q.captured && !!q.pos && q.pos.r === to.r && q.pos.c === to.c) || null;
+      if (mover) {
+        const before = oldPieces.find(q => q.id === mover!.id);
+        wasDark = !!before && !before.revealed;
+      }
+    }
+    const dying: { id: string; pos: Pos }[] = [];
+    for (const op of oldPieces) {
+      if (op.captured || !op.pos) continue;
+      const np = g.pieces.find(q => q.id === op.id);
+      if (np && np.captured) dying.push({ id: op.id, pos: { r: op.pos.r, c: op.pos.c } });
+    }
+
+    this.dyingPos = {};
+    this.dyingOut = {};
+    for (const d of dying) this.dyingPos[d.id] = d.pos;
+    if (mover && wasDark) mover.revealed = false;   // 先暗子落位，稍后翻开
+
+    this.G = g;
+    g.selected = null;
+    g.busy = true;
+    this.render();
+
+    const alive = () => this.G === g && ep === this.epoch;
+
+    if (!animate) {
+      if (g.over) { if (!alreadyOver) this.finishRemote(g); return; }
+      g.busy = false;
+      this.render();
+      return;
+    }
+
+    const tReveal = 620;
+    const tCap = wasDark ? 900 : 360;
+    this.vibrate(wasDark ? 'light' : (dying.length ? 'medium' : 'light'));
+
+    if (dying.length) {
+      setTimeout(() => {
+        if (!alive()) return;
+        for (const d of dying) this.dyingOut[d.id] = true;
+        this.render();
+      }, tCap);
+      setTimeout(() => {
+        if (!alive()) return;
+        for (const d of dying) { delete this.dyingPos[d.id]; delete this.dyingOut[d.id]; }
+        this.render();
+      }, tCap + 480);
+    }
+
+    if (wasDark && mover) {
+      setTimeout(() => {
+        if (!alive() || !mover) return;
+        mover.revealed = true;
+        this.render();
+        let msg = '翻开：' + (mover.color === 'red' ? '红' : '黑') + '·' + CHARS[mover.color][mover.type];
+        if (dying.length) {
+          const dp = g.pieces.find(q => q.id === dying[0].id);
+          if (dp) msg += '；吃掉：' + (dp.color === 'red' ? '红' : '黑') + '·' + CHARS[dp.color][dp.type];
+        }
+        this.showToast(msg, '', 2000);
+      }, tReveal);
+    } else if (dying.length && mover) {
+      const dp = g.pieces.find(q => q.id === dying[0].id);
+      if (dp) this.showToast(sideName(mover.color) + '吃掉' + sideName(dp.color) + '·' + CHARS[dp.color][dp.type]);
+    }
+
+    setTimeout(() => {
+      if (!alive()) return;
+      if (g.over) { this.finishRemote(g); return; }
+      g.busy = false;
+      this.render();
+      if (g.cfg.rule === 'check' && inCheck(g, g.turn)) {
+        this.showToast(g.turn === this.role ? '你被将军！' : '将军！', 'red', 1500);
+        this.vibrate('medium');
+      }
+    }, tCap + 520);
+  },
+
+  finishRemote(g: GameState) {
+    g.busy = true;
+    this.dyingPos = {};
+    this.dyingOut = {};
+    for (const p of g.pieces) p.revealed = true;
+    this.render();
+    this.vibrate('heavy');
+    this.setData({
+      endTitle: g.winner ? (g.winner === 'red' ? '红方胜' : '黑方胜') + (g.winner === this.role ? '（你）' : '') : '和棋',
+      endTitleCls: g.winner === 'red' ? 'rr' : (g.winner === 'black' ? 'rb' : ''),
+      endReason: g.reason,
+      showEnd: false
+    });
+    const ep = this.epoch;
+    setTimeout(() => { if (this.G === g && ep === this.epoch) this.setData({ showEnd: true }); }, 1400);
+  },
+
+  onResign() {
+    if (!this.data.online || !this.G || this.G.over) return;
+    wx.showModal({
+      title: '认输', content: '确定认输吗？对方将获胜。',
+      success: (r: any) => {
+        if (!r.confirm) return;
+        callRoom('resign', { code: this.roomCode }).then(res => {
+          if (!res.ok) { this.showToast(res.msg || '操作失败'); return; }
+          if (typeof res.version === 'number') this.ver = res.version;
+          this.applyRemote(res, false);
+        });
+      }
+    });
+  },
+
+  /** 离开对局页：正常返回上一页；从分享卡片直接进入（无上一页）时回首页 */
+  leavePage() {
+    this.stopPoll();
+    if (getCurrentPages().length > 1) wx.navigateBack();
+    else wx.reLaunch({ url: '/pages/index/index' });
+  },
+
+  onCopyCode() {
+    wx.setClipboardData({
+      data: this.roomCode,
+      success: () => this.showToast('房间码已复制'),
+      fail: () => {}
+    });
+  },
+
+  onQuitRoom() {
+    wx.showModal({
+      title: '关闭房间', content: '关闭后好友将无法加入，确定吗？',
+      success: (r: any) => {
+        if (!r.confirm) return;
+        callRoom('close', { code: this.roomCode }).then(() => this.leavePage());
+      }
+    });
+  },
+
   /* ================= 头部按钮 ================= */
   onRestart() {
+    if (this.data.online) {
+      wx.showModal({
+        title: '退出房间',
+        content: this.G && !this.G.over ? '退出将视为认输，确定退出？' : '确定退出房间？',
+        success: (r: any) => {
+          if (!r.confirm) return;
+          const leave = () => this.leavePage();
+          if (this.G && !this.G.over) callRoom('resign', { code: this.roomCode }).then(leave);
+          else leave();
+        }
+      });
+      return;
+    }
     const g = this.G;
     if (g) this.startGame({ ...g.cfg });
   },
@@ -452,6 +868,8 @@ Page({
     if (g) this.startGame({ ...g.cfg });
   },
   onBackSetup() {
+    if (this.data.online) { this.leavePage(); return; }
+    this.stopPoll();
     wx.navigateBack();
   },
   onRulesOpen() { this.setData({ showRules: true }); },

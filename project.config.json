@@ -1,8 +1,9 @@
 {
   "description": "盲下象棋 · V1 核心对局（原生小程序 + TypeScript）",
   "miniprogramRoot": "miniprogram/",
+  "cloudfunctionRoot": "cloudfunctions/",
   "compileType": "miniprogram",
-  "appid": "wxb0f08d780383609f",
+  "appid": "wx6ca48ac6311d123c",
   "projectname": "blind-xiangqi",
   "setting": {
     "es6": true,

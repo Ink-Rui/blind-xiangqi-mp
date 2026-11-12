@@ -198,3 +198,32 @@
 
 /* 震动开关置灰态（.hbtn 定义在 app.wxss） */
 .hbtn.muted { opacity: .5; }
+
+/* ===== 联机：房间码与邀请按钮 ===== */
+.room-code {
+  margin: 4rpx 0 20rpx;
+  padding: 10rpx 0;
+  text-align: center;
+  font-size: 64rpx;
+  font-weight: 800;
+  letter-spacing: 12rpx;
+  color: #2b2724;
+  background: rgba(43, 39, 36, .06);
+  border-radius: 16rpx;
+  font-family: Menlo, Consolas, monospace;
+}
+/* button 版大按钮：抵消小程序 button 默认样式 */
+button.big.share {
+  width: 100%;
+  margin: 0;
+  padding: 20rpx 0;
+  line-height: 1.4;
+  border: none;
+  border-radius: 16rpx;
+  background: linear-gradient(135deg, #c4453a, #a02c24);
+  color: #fff;
+  font-size: 32rpx;
+  font-weight: 800;
+  letter-spacing: .2em;
+}
+button.big.share::after { border: none; }

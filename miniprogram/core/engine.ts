@@ -20,7 +20,7 @@ export interface Piece {
 export interface Slot { r: number; c: number; t: PieceType }
 export type ShuffleMode = 'A1' | 'A2' | 'B';
 export type RuleMode = 'check' | 'kill';
-export type PlayMode = 'hot' | 'ai';
+export type PlayMode = 'hot' | 'ai' | 'online';
 export type Level = 'easy' | 'normal' | 'hard';
 export interface Cfg { shuffle: ShuffleMode; rule: RuleMode; play: PlayMode; level: Level }
 export interface HistoryEntry { hash: string; checkBy: Side | null }
