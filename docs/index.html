@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>盲下象棋 · 打开即玩</title>
+<meta name="description" content="标准象棋盘，开局暗置洗牌，走完才翻开。一半棋艺，一半运气。无需安装，打开网页即可对弈。" />
+<meta name="theme-color" content="#efe7d8" />
+<meta property="og:title" content="盲下象棋 · 打开即玩" />
+<meta property="og:description" content="标准象棋盘，开局暗置洗牌，走完才翻开。一半棋艺，一半运气。" />
+<meta property="og:type" content="website" />
+<link rel="stylesheet" href="./assets/style.css" />
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">盲</div>
+      <div class="brand-text">
+        <h1>盲下象棋</h1>
+        <p>标准棋盘 · 暗置洗牌 · 走完翻开</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <button type="button" id="helpBtn" class="mini-btn">玩法</button>
+      <a class="mini-btn" href="https://github.com/Ink-Rui/blind-xiangqi-mp" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </header>
+
+  <main id="setupView" class="setup">
+    <section class="panel">
+      <h2 class="panel-title">开始一局</h2>
+
+      <div class="group">
+        <div class="group-head"><span>洗牌模式</span><em>决定暗子归属能被推知的程度</em></div>
+        <div class="options" id="optShuffle"></div>
+      </div>
+
+      <div class="group">
+        <div class="group-head"><span>胜负规则</span><em>将军流程，或吃将即胜</em></div>
+        <div class="options two" id="optRule"></div>
+      </div>
+
+      <div class="group">
+        <div class="group-head"><span>对局模式</span><em>一部设备轮流下，或与 AI 过招</em></div>
+        <div class="options two" id="optPlay"></div>
+      </div>
+
+      <div class="group" id="levelGroup">
+        <div class="group-head"><span>陪练难度</span><em>简单随意，困难会权衡风险</em></div>
+        <div class="options" id="optLevel"></div>
+      </div>
+
+      <div class="start-row">
+        <button type="button" id="startBtn" class="btn primary big">开始对局</button>
+      </div>
+      <p class="fineprint">打开即玩，无需安装。支持手机与桌面浏览器。</p>
+    </section>
+
+    <section class="panel guide">
+      <h2 class="panel-title">怎么玩</h2>
+      <ol class="steps">
+        <li><b>棋子暗置</b><span>开局除将帅外全部背面朝上，按所选模式随机摆放。</span></li>
+        <li><b>按位置走棋</b><span>暗子按它所在位置的「位置型棋种」走法移动，走完那一步才翻开。</span></li>
+        <li><b>操作权</b><span>己方半盘的暗子、己方颜色的明子，轮到你时都能操作。</span></li>
+        <li><b>吃错代价</b><span>暗子归属未知，谁都可以吃；误吃己方将帅按吃将判负，双人同屏可协商悔一步。</span></li>
+        <li><b>胜负</b><span>吃掉对方将帅立即获胜；将军规则下被将死或无子可动同样落败。</span></li>
+        <li><b>和棋</b><span>120 个半回合无吃子，或三次重复局面，判和。</span></li>
+      </ol>
+      <p class="fineprint">同一份规则引擎（<code>core/engine.ts</code>）同时驱动小程序与网页版，开源在 GitHub。</p>
+    </section>
+  </main>
+
+  <main id="gameView" class="game hidden">
+    <div class="board-wrap">
+      <div class="statusbar">
+        <div class="turn"><span id="turnDot" class="turn-dot"></span><span id="turnText">红方行棋</span></div>
+        <div class="meta"><span id="moveText">第 1 手</span><span class="sep">·</span><span id="noCapText">无吃子 0/120</span></div>
+      </div>
+
+      <div id="board" class="board" aria-label="象棋棋盘">
+        <svg id="boardGrid" class="grid" viewBox="0 0 960 1080" preserveAspectRatio="none" aria-hidden="true"></svg>
+        <div id="marks" class="layer marks" aria-hidden="true"></div>
+        <div id="pieces" class="layer pieces"></div>
+        <div id="hints" class="layer hints"></div>
+        <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+        <div id="endOverlay" class="overlay hidden">
+          <div class="end-card">
+            <p class="end-kicker">对局结束</p>
+            <h2 id="endTitle" class="end-title">红方胜</h2>
+            <p id="endReason" class="end-reason"></p>
+            <div class="end-actions">
+              <button type="button" id="againBtn" class="btn primary">再来一局</button>
+              <button type="button" id="toSetupBtn" class="btn ghost">返回设置</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button type="button" id="undoBtn" class="btn ghost">悔棋</button>
+        <button type="button" id="resignBtn" class="btn ghost">认输</button>
+        <button type="button" id="restartBtn" class="btn ghost">重开</button>
+        <button type="button" id="backBtn" class="btn ghost">设置</button>
+      </div>
+      <p class="hint" id="hintText">点击己方可操作的棋子，再点亮点落子。</p>
+    </div>
+
+    <aside class="side">
+      <div class="panel side-card">
+        <h3>本局设置</h3>
+        <dl id="cfgList" class="cfg-list"></dl>
+      </div>
+      <div class="panel side-card">
+        <h3>提示</h3>
+        <ul class="tips">
+          <li>暗子背面朝上，按所在位置决定走法。</li>
+          <li>虚线框是上一步的起点与落点。</li>
+          <li>误吃己方将帅会直接判负，吃暗子前先想清楚。</li>
+          <li>将军规则只对已翻开的将帅生效。</li>
+        </ul>
+      </div>
+    </aside>
+  </main>
+
+  <footer class="foot">
+    <span>盲下象棋 · MIT License</span>
+    <a href="https://github.com/Ink-Rui/blind-xiangqi-mp" target="_blank" rel="noopener">查看源码</a>
+  </footer>
+</div>
+
+<div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+  <div class="modal-card">
+    <h3 id="modalTitle">提示</h3>
+    <p id="modalBody" class="modal-body"></p>
+    <div class="modal-actions">
+      <button type="button" id="modalCancel" class="btn ghost">取消</button>
+      <button type="button" id="modalOk" class="btn primary">确定</button>
+    </div>
+  </div>
+</div>
+
+<noscript><p class="noscript">需要启用 JavaScript 才能游玩。</p></noscript>
+<script type="module" src="./assets/app.js"></script>
+</body>
+</html>

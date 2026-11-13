@@ -2,9 +2,10 @@
   "name": "blind-xiangqi-mp",
   "version": "0.1.0",
   "private": true,
-  "description": "盲下象棋 · 微信小程序（原生 + TypeScript）",
+  "description": "盲下象棋 · 网页版（打开即玩）+ 微信小程序（原生 + TypeScript）",
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "build:web": "tsc miniprogram/core/engine.ts --module es2020 --target es2020 --lib ES2020,DOM --outDir docs/assets --removeComments --skipLibCheck",
     "build:engine": "tsc miniprogram/core/engine.ts --module commonjs --target ES2020 --lib ES2020 --outDir cloudfunctions/room --removeComments --skipLibCheck"
   },
   "devDependencies": {
