@@ -42,8 +42,8 @@
       </div>
 
       <div class="group">
-        <div class="group-head"><span>对局模式</span><em>一部设备轮流下，或与 AI 过招</em></div>
-        <div class="options two" id="optPlay"></div>
+        <div class="group-head"><span>对局模式</span><em>一部设备轮流下、与 AI 过招，或和朋友异地联机</em></div>
+        <div class="options" id="optPlay"></div>
       </div>
 
       <div class="group" id="levelGroup">
@@ -51,7 +51,19 @@
         <div class="options" id="optLevel"></div>
       </div>
 
-      <div class="start-row">
+      <div class="group hidden" id="onlineGroup">
+        <div class="group-head"><span>联机对战</span><em>一方建房，把房间码或链接发给对手</em></div>
+        <div class="online-row">
+          <button type="button" id="createRoomBtn" class="btn primary">创建房间</button>
+          <div class="join-row">
+            <input id="roomInput" class="input" maxlength="6" autocomplete="off" spellcheck="false" placeholder="6 位房间码" aria-label="房间码" />
+            <button type="button" id="joinRoomBtn" class="btn ghost">加入</button>
+          </div>
+        </div>
+        <p class="fineprint" id="onlineState">建房方执红先行，加入方执黑。</p>
+      </div>
+
+      <div class="start-row" id="startRow">
         <button type="button" id="startBtn" class="btn primary big">开始对局</button>
       </div>
       <p class="fineprint">打开即玩，无需安装。支持手机与桌面浏览器。</p>
@@ -66,6 +78,7 @@
         <li><b>吃错代价</b><span>暗子归属未知，谁都可以吃；误吃己方将帅按吃将判负，双人同屏可协商悔一步。</span></li>
         <li><b>胜负</b><span>吃掉对方将帅立即获胜；将军规则下被将死或无子可动同样落败。</span></li>
         <li><b>和棋</b><span>120 个半回合无吃子，或三次重复局面，判和。</span></li>
+        <li><b>联机</b><span>选「联机对战」，一方建房后把链接或房间码发给对手，对方打开即可对局；联机不支持悔棋。</span></li>
       </ol>
       <p class="fineprint">同一份规则引擎（<code>core/engine.ts</code>）同时驱动小程序与网页版，开源在 GitHub。</p>
     </section>
@@ -84,6 +97,18 @@
         <div id="pieces" class="layer pieces"></div>
         <div id="hints" class="layer hints"></div>
         <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+        <div id="waitOverlay" class="overlay hidden">
+          <div class="end-card">
+            <p class="end-kicker">等待对手加入</p>
+            <h2 id="roomCodeText" class="end-title room-code">------</h2>
+            <p class="end-reason">把房间码或邀请链接发给朋友，对方打开页面即可加入。</p>
+            <div class="end-actions">
+              <button type="button" id="copyLinkBtn" class="btn primary">复制链接</button>
+              <button type="button" id="cancelRoomBtn" class="btn ghost">取消房间</button>
+            </div>
+          </div>
+        </div>
 
         <div id="endOverlay" class="overlay hidden">
           <div class="end-card">

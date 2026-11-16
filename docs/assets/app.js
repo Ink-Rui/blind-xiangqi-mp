@@ -6,6 +6,7 @@ import {
   newGameState, legalTargets, pieceAt, operable, halfOwner, inCheck, hasLegal,
   hashState, clonePieces, pickAIMove, opp, CHARS, PIECE_XY
 } from './engine.js';
+import { ONLINE_READY, createRoom, fetchRoom, markJoined, pushState } from './net.js';
 
 const $ = (s) => document.querySelector(s);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -22,7 +23,8 @@ const OPTS = {
   ],
   play: [
     { v: 'hot', name: '双人同屏', desc: '面对面轮流操作同一部设备，信息双方公开' },
-    { v: 'ai', name: 'AI 陪练', desc: '单人对弈，你执红先行；难度在下方选择' }
+    { v: 'ai', name: 'AI 陪练', desc: '单人对弈，你执红先行；难度在下方选择' },
+    { v: 'online', name: '联机对战', desc: '建房或输入房间码，和朋友异地对弈' }
   ],
   level: [
     { v: 'easy', name: '简单', desc: 'AI 随手乱走，适合熟悉规则' },
@@ -33,7 +35,7 @@ const OPTS = {
 
 const SHUFFLE_NAME = { A1: 'A1 半盘内洗', A2: 'A2 跨河全混', B: 'B 全盘混洗' };
 const RULE_NAME = { check: '将军规则', kill: '吃将即胜' };
-const PLAY_NAME = { hot: '双人同屏', ai: 'AI 陪练' };
+const PLAY_NAME = { hot: '双人同屏', ai: 'AI 陪练', online: '联机对战' };
 const LEVEL_NAME = { easy: '简单', normal: '普通', hard: '困难' };
 
 const HELP_TEXT = [
@@ -60,6 +62,8 @@ let aiThinking = false;
 let pieceEls = new Map();
 let toastTimer = 0;
 let modalFns = { ok: null, cancel: null };
+/** 联机会话：{ code, color, version, joined, timer, pulling, localBusy, pending, fail } */
+let online = null;
 
 /* ---------------- 设置 ---------------- */
 
@@ -107,6 +111,13 @@ function renderOpts() {
     }
   }
   $('#levelGroup').classList.toggle('hidden', sel.play !== 'ai');
+  $('#onlineGroup').classList.toggle('hidden', sel.play !== 'online');
+  $('#startRow').classList.toggle('hidden', sel.play === 'online');
+  $('#onlineState').textContent = ONLINE_READY
+    ? '建房方执红先行，加入方执黑。'
+    : '联机未配置：请在 assets/config.js 填入 Supabase 地址与 anon key 后重新部署。';
+  $('#createRoomBtn').disabled = !ONLINE_READY;
+  $('#joinRoomBtn').disabled = !ONLINE_READY;
 }
 
 /* ---------------- 棋盘绘制 ---------------- */
@@ -239,13 +250,15 @@ function updateStatus() {
     text = g.winner ? sideName(g.winner) + '胜' : '和棋';
   } else if (cfg.play === 'ai') {
     text = g.turn === 'red' ? '轮到你走棋' : '陪练思考中…';
+  } else if (isOnline()) {
+    text = !online.joined ? '等待对手加入' : (g.turn === online.color ? '轮到你走棋' : '等待对方走棋…');
   } else {
     text = sideName(g.turn) + '行棋';
   }
   $('#turnText').textContent = text;
   $('#moveText').textContent = '第 ' + g.moveNum + ' 手';
   $('#noCapText').textContent = '无吃子 ' + g.noCap + '/120';
-  $('#undoBtn').disabled = !!g.over;
+  $('#undoBtn').disabled = !!g.over || isOnline();
   $('#resignBtn').disabled = !!g.over;
 
   const tip = $('#hintText');
@@ -253,10 +266,16 @@ function updateStatus() {
     tip.textContent = '本局已结束。';
   } else if (cfg.play === 'ai' && g.turn === 'black') {
     tip.textContent = '陪练正在思考…';
+  } else if (isOnline() && !online.joined) {
+    tip.textContent = '等待对手加入房间…';
+  } else if (isOnline() && g.turn !== online.color) {
+    tip.textContent = '等待对方走棋…';
   } else if (selectedId) {
     tip.textContent = '已选中棋子，点击亮点落子。';
   } else if (cfg.play === 'ai') {
     tip.textContent = '点击己方可操作的棋子，再点亮点落子。';
+  } else if (isOnline()) {
+    tip.textContent = '轮到你了：点击己方可操作的棋子。';
   } else {
     tip.textContent = sideName(g.turn) + '行棋：点击己方可操作的棋子。';
   }
@@ -294,12 +313,14 @@ function closeModal() {
 /* ---------------- 对局流程 ---------------- */
 
 function beginGame() {
+  leaveOnline();
   epoch++;
   clearTimeout(aiTimer);
   aiThinking = false;
   snaps = [];
   selectedId = null;
   hideEnd();
+  hideWaiting();
   closeModal();
   g = newGameState(cfg);
   $('#setupView').classList.add('hidden');
@@ -320,12 +341,17 @@ function renderCfgList() {
     ['规则', RULE_NAME[cfg.rule]],
     ['模式', cfg.play === 'ai' ? 'AI 陪练 · ' + LEVEL_NAME[cfg.level] : PLAY_NAME[cfg.play]]
   ];
+  if (isOnline()) {
+    rows.push(['房间', online.code + ' · 你执' + (online.color === 'red' ? '红' : '黑')]);
+    rows.push(['对手', online.joined ? '已加入' : '等待加入']);
+  }
   $('#cfgList').innerHTML = rows
     .map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`)
     .join('');
 }
 
 function toSetup() {
+  leaveOnline();
   epoch++;
   clearTimeout(aiTimer);
   aiThinking = false;
@@ -333,7 +359,9 @@ function toSetup() {
   snaps = [];
   selectedId = null;
   hideEnd();
+  hideWaiting();
   closeModal();
+  history.replaceState(null, '', location.pathname);
   $('#gameView').classList.add('hidden');
   $('#setupView').classList.remove('hidden');
   renderOpts();
@@ -482,6 +510,7 @@ function finishMove(p, target, moverSide) {
     return;
   }
   if (cfg.play === 'ai' && g.turn === 'black') scheduleAI();
+  if (isOnline()) commitOnline();
 }
 
 /* ---------------- 悔棋 / 误吃 / 认输 / 终局 ---------------- */
@@ -520,6 +549,10 @@ function misEatFlow(attacker, king, moverSide) {
     endGame(winner, sideName(moverSide) + '误吃己方将帅（人机对局不提供协商，判负）');
     return;
   }
+  if (isOnline()) {
+    endGame(winner, sideName(moverSide) + '误吃己方将帅（联机不提供协商），判负');
+    return;
+  }
   openModal({
     title: '误吃己方将帅',
     body: sideName(moverSide) + '走子吃掉暗子，翻开后竟是己方「' + CHARS[king.color][king.type] + '」。\n'
@@ -551,6 +584,7 @@ function endGame(winner, reason) {
   aiThinking = false;
   g.over = true;
   g.winner = winner;
+  g.reason = reason;
   g.busy = true;
   g.selected = null;
   selectedId = null;
@@ -558,16 +592,23 @@ function endGame(winner, reason) {
   syncPieces();
   renderHints();
   updateStatus();
+  renderEnd();
+  if (isOnline()) commitOnline();
+}
 
+function renderEnd() {
+  if (!g) return;
+  const winner = g.winner;
   let title = '和棋';
   if (winner) {
     if (cfg.play === 'ai') title = winner === 'red' ? '你赢了' : '陪练获胜';
+    else if (isOnline()) title = winner === online.color ? '你赢了' : '对手获胜';
     else title = sideName(winner) + '胜';
   }
   const titleEl = $('#endTitle');
   titleEl.textContent = title;
   titleEl.className = 'end-title' + (winner ? (winner === 'red' ? '' : ' black') : ' draw');
-  $('#endReason').textContent = reason;
+  $('#endReason').textContent = g.reason || '';
   $('#endOverlay').classList.remove('hidden');
 }
 
@@ -578,6 +619,7 @@ function hideEnd() {
 
 function onUndo() {
   if (!g || g.over || g.busy) return;
+  if (isOnline()) { toast('联机对局暂不支持悔棋'); return; }
   if (!snaps.length) { toast('没有可悔的着法'); return; }
 
   if (cfg.play === 'hot') {
@@ -621,15 +663,17 @@ function onUndo() {
 
 function onResign() {
   if (!g || g.over) return;
-  const loser = cfg.play === 'ai' ? 'red' : g.turn;
+  const loser = isOnline() ? online.color : (cfg.play === 'ai' ? 'red' : g.turn);
   openModal({
     title: '认输',
-    body: '确定' + sideName(loser) + '认输吗？对方将获胜。',
+    body: isOnline()
+      ? '确定认输吗？认输后对手获胜，本局立即结束。'
+      : '确定' + sideName(loser) + '认输吗？对方将获胜。',
     okText: '确认认输',
     cancelText: '继续对局',
     onOk() {
       closeModal();
-      endGame(opp(loser), sideName(loser) + '认输');
+      endGame(opp(loser), isOnline() ? '对方认输，你获胜' : sideName(loser) + '认输');
     }
   });
 }
@@ -638,17 +682,302 @@ function onRestart() {
   if (!g) return;
   openModal({
     title: '重开本局',
-    body: '确定重开吗？当前进度将丢失。',
+    body: isOnline() ? '重开会同步重置双方的棋盘，确定吗？' : '确定重开吗？当前进度将丢失。',
     okText: '重开',
     cancelText: '取消',
-    onOk() { closeModal(); beginGame(); }
+    onOk() {
+      closeModal();
+      if (isOnline()) resetOnlineGame();
+      else beginGame();
+    }
   });
+}
+
+/* ---------------- 联机 ---------------- */
+
+const ROOM_KEY = 'blind-xiangqi-room';
+
+function isOnline() {
+  return !!online;
+}
+
+function loadRoom() {
+  try {
+    const raw = localStorage.getItem(ROOM_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function saveRoom(code, color) {
+  try { localStorage.setItem(ROOM_KEY, JSON.stringify({ code, color })); } catch (e) { /* 忽略隐私模式报错 */ }
+}
+
+function leaveOnline() {
+  stopPolling();
+  online = null;
+}
+
+function encodeState(state) {
+  const copy = JSON.parse(JSON.stringify(state));
+  copy.selected = null;
+  copy.busy = false;
+  return copy;
+}
+
+function decodeState(state) {
+  const next = JSON.parse(JSON.stringify(state));
+  next.selected = null;
+  next.busy = false;
+  if (!next.cfg) next.cfg = { ...cfg };
+  next.cfg.play = 'online';
+  return next;
+}
+
+function showWaiting(code) {
+  $('#roomCodeText').textContent = code;
+  $('#waitOverlay').classList.remove('hidden');
+}
+
+function hideWaiting() {
+  const el = $('#waitOverlay');
+  if (el) el.classList.add('hidden');
+}
+
+function stopPolling() {
+  if (online && online.timer) {
+    clearInterval(online.timer);
+    online.timer = 0;
+  }
+}
+
+function startPolling() {
+  stopPolling();
+  if (!online) return;
+  online.timer = setInterval(pullRoom, 1500);
+  pullRoom();
+}
+
+async function pullRoom() {
+  if (!online || online.pulling || online.localBusy) return;
+  if (g && g.busy) return;
+  online.pulling = true;
+  try {
+    const room = await fetchRoom(online.code);
+    if (!online) return;
+    if (!room) { stopPolling(); toast('房间已不存在'); return; }
+    online.fail = 0;
+    if (room.version > online.version) applyRemote(room);
+  } catch (err) {
+    if (!online) return;
+    online.fail = (online.fail || 0) + 1;
+    if (online.fail === 3) toast('网络有点慢，正在重试…');
+  } finally {
+    if (online) online.pulling = false;
+  }
+}
+
+function diffReveal(prev, next) {
+  const before = new Map();
+  for (const p of prev.pieces) before.set(p.id, p);
+  const out = [];
+  for (const p of next.pieces) {
+    const old = before.get(p.id);
+    if (!old || old.revealed || !p.revealed) continue;
+    const label = (p.color === 'red' ? '红' : '黑') + '·' + CHARS[p.color][p.type];
+    out.push((p.captured ? '被吃 ' : '翻开 ') + label);
+  }
+  return out.slice(0, 3);
+}
+
+function applyRemote(room) {
+  if (!g || !online) return;
+  if (g.busy) { online.pending = room; return; }
+  online.version = room.version;
+  if (!online.joined && room.guest_joined) {
+    online.joined = true;
+    hideWaiting();
+    renderCfgList();
+    toast('对手已加入，开始对局', 'reveal');
+  }
+  const next = decodeState(room.state);
+  const msgs = diffReveal(g, next);
+  const needRebuild = next.history.length < g.history.length;
+  g = next;
+  if (needRebuild) rebuildPieces();
+  selectedId = null;
+  syncPieces();
+  renderHints();
+  updateStatus();
+  if (msgs.length) toast(msgs.join('；'), 'reveal');
+  if (g.over) renderEnd();
+}
+
+async function commitOnline() {
+  if (!online || !g) return;
+  online.localBusy = true;
+  const payload = encodeState(g);
+  const base = online.version;
+  try {
+    const row = await pushState(online.code, base, payload);
+    if (!row) throw new Error('conflict');
+    online.version = row.version;
+    online.fail = 0;
+  } catch (err) {
+    try {
+      const room = await fetchRoom(online.code);
+      if (room && online && room.version > online.version) {
+        online.localBusy = false;
+        applyRemote(room);
+      }
+      toast('局面已被对手更新，已同步');
+    } catch (e2) {
+      toast('同步失败，请检查网络');
+    }
+  } finally {
+    if (online) {
+      online.localBusy = false;
+      const pending = online.pending;
+      online.pending = null;
+      if (pending && pending.version > online.version) applyRemote(pending);
+    }
+  }
+}
+
+function beginOnlineGame(room, color) {
+  epoch++;
+  clearTimeout(aiTimer);
+  aiThinking = false;
+  snaps = [];
+  selectedId = null;
+  hideEnd();
+  hideWaiting();
+  closeModal();
+  cfg = { ...sel, play: 'online' };
+  g = decodeState(room.state);
+  online = {
+    code: room.code,
+    color,
+    version: room.version,
+    joined: !!room.guest_joined,
+    timer: 0,
+    pulling: false,
+    localBusy: false,
+    pending: null,
+    fail: 0
+  };
+  saveRoom(room.code, color);
+  $('#setupView').classList.add('hidden');
+  $('#gameView').classList.remove('hidden');
+  renderCfgList();
+  rebuildPieces();
+  markLayer.innerHTML = '';
+  hintLayer.innerHTML = '';
+  syncPieces();
+  renderHints();
+  updateStatus();
+  requestAnimationFrame(fitBoard);
+  if (online.joined) hideWaiting();
+  else showWaiting(online.code);
+  startPolling();
+}
+
+function resetOnlineGame() {
+  if (!online) return;
+  epoch++;
+  clearTimeout(aiTimer);
+  aiThinking = false;
+  snaps = [];
+  selectedId = null;
+  hideEnd();
+  g = newGameState({ ...cfg, play: 'online' });
+  g.cfg.play = 'online';
+  rebuildPieces();
+  markLayer.innerHTML = '';
+  hintLayer.innerHTML = '';
+  syncPieces();
+  renderHints();
+  updateStatus();
+  commitOnline();
+  toast('已重开，正在同步双方棋盘');
+}
+
+async function onCreateRoom() {
+  if (!ONLINE_READY) { toast('联机未配置，请先填写 config.js'); return; }
+  leaveOnline();
+  const btn = $('#createRoomBtn');
+  btn.disabled = true;
+  try {
+    sel.play = 'online';
+    const fresh = newGameState({ ...sel, play: 'online' });
+    fresh.cfg.play = 'online';
+    const room = await createRoom(encodeState(fresh));
+    beginOnlineGame(room, 'red');
+  } catch (err) {
+    openModal({
+      title: '建房失败',
+      body: '创建房间时出错：\n' + err.message + '\n请稍后重试，或检查 assets/config.js 里的 Supabase 配置。',
+      okText: '知道了',
+      cancelText: ''
+    });
+  } finally {
+    btn.disabled = !ONLINE_READY;
+  }
+}
+
+async function joinByCode(raw) {
+  if (!ONLINE_READY) { toast('联机未配置，请先填写 config.js'); return; }
+  const code = String(raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+  if (code.length !== 6) { toast('请输入 6 位房间码'); return; }
+  const btn = $('#joinRoomBtn');
+  btn.disabled = true;
+  try {
+    let room = await fetchRoom(code);
+    if (!room) { toast('房间不存在或已过期'); return; }
+    const saved = loadRoom();
+    let color = saved && saved.code === code ? saved.color : null;
+    if (!color) {
+      if (room.guest_joined) { toast('房间已满，无法加入'); return; }
+      const joined = await markJoined(code, room.version);
+      if (!joined) { toast('加入失败，请再试一次'); return; }
+      room = joined;
+      color = 'black';
+    }
+    sel.play = 'online';
+    leaveOnline();
+    beginOnlineGame(room, color);
+  } catch (err) {
+    openModal({
+      title: '加入失败',
+      body: '加入房间时出错：\n' + err.message + '\n请检查房间码是否正确、网络是否可用。',
+      okText: '知道了',
+      cancelText: ''
+    });
+  } finally {
+    btn.disabled = !ONLINE_READY;
+  }
+}
+
+async function copyInviteLink() {
+  if (!online) return;
+  const url = location.origin + location.pathname + '?room=' + online.code;
+  try {
+    await navigator.clipboard.writeText(url);
+    toast('邀请链接已复制，发给朋友即可');
+  } catch (err) {
+    openModal({ title: '邀请链接', body: url, okText: '知道了', cancelText: '' });
+  }
 }
 
 /* ---------------- 交互绑定 ---------------- */
 
 function onBoardClick(e) {
   if (!g || g.over || g.busy) return;
+  if (isOnline()) {
+    if (!online.joined) { toast('等待对手加入房间'); return; }
+    if (g.turn !== online.color) { toast('还没轮到你走棋'); return; }
+  }
 
   const targetEl = e.target.closest('.target');
   if (targetEl) {
@@ -688,8 +1017,18 @@ function bind() {
   $('#resignBtn').addEventListener('click', onResign);
   $('#restartBtn').addEventListener('click', onRestart);
   $('#backBtn').addEventListener('click', toSetup);
-  $('#againBtn').addEventListener('click', beginGame);
+  $('#againBtn').addEventListener('click', () => {
+    if (isOnline()) resetOnlineGame();
+    else beginGame();
+  });
   $('#toSetupBtn').addEventListener('click', toSetup);
+  $('#createRoomBtn').addEventListener('click', onCreateRoom);
+  $('#joinRoomBtn').addEventListener('click', () => joinByCode($('#roomInput').value));
+  $('#roomInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') joinByCode($('#roomInput').value);
+  });
+  $('#copyLinkBtn').addEventListener('click', copyInviteLink);
+  $('#cancelRoomBtn').addEventListener('click', toSetup);
   $('#helpBtn').addEventListener('click', () => {
     openModal({ title: '玩法速览', body: HELP_TEXT, okText: '知道了', cancelText: '' });
   });
@@ -714,3 +1053,12 @@ buildGrid();
 renderOpts();
 bind();
 if (window.ResizeObserver) new ResizeObserver(fitBoard).observe($('#board'));
+
+// 邀请链接：?room=CODE 直接进入加入流程
+const inviteCode = new URLSearchParams(location.search).get('room');
+if (inviteCode) {
+  sel.play = 'online';
+  renderOpts();
+  $('#roomInput').value = inviteCode.toUpperCase();
+  joinByCode(inviteCode);
+}
