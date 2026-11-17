@@ -6,6 +6,10 @@
 
 浏览器直接打开就能玩，无需安装、无需登录。手机与桌面都适配，支持双人同屏、三档 AI 陪练和异地联机对战。
 
+![对局界面](./docs/assets/screenshot-mobile.png)
+
+设置页在桌面端是双栏卡片布局，手机端自动收成单列；对局页为手机优先版式，顶部是走子方与手数胶囊，棋盘下方是双方被吃棋子托盘。手机上可用浏览器菜单“添加到主屏幕”，以独立窗口打开。
+
 ## 玩法
 
 - 棋盘、走子规则与标准中国象棋一致
@@ -15,6 +19,9 @@
 - 暗子谁都可以吃；误吃己方将帅按吃将判负，双人同屏可协商悔一步
 - 三种洗牌模式（A1 半盘内洗 / A2 跨河全混 / B 全盘混洗）、两种胜负规则（将军 / 吃将即胜）
 - 悔棋、认输、重开；120 半回合无吃子或三次重复局面判和
+- 今日一局：每天一副固定牌面，和 AI 交手，同一天所有人开局相同
+- 棋谱：对局中随时查看/复制着法记录，结束后可保存战绩图
+- 音效与震动可分别开关，偏好记在本地
 - 联机：一方建房把链接发给对手，双方实时同步；联机不提供悔棋，误吃己方将帅直接判负
 
 ## 目录结构
@@ -22,17 +29,23 @@
 ```
 docs/                 # 网页版（GitHub Pages 静态托管，无构建依赖）
   index.html
+  manifest.webmanifest  # 添加到主屏幕（PWA）
   assets/style.css
   assets/app.js       # 交互与对局流程
   assets/engine.js    # 由 miniprogram/core/engine.ts 编译而来
   assets/net.js       # 联机网络层（纯 fetch 调 Supabase PostgREST）
   assets/config.js    # Supabase 地址与 anon key（留空则联机不可用）
+  assets/icon-*.png   # 站点图标
+  assets/og.png       # 分享预览图
 supabase/schema.sql   # 联机房间表 + RLS 策略
 miniprogram/          # 微信小程序（原生 + TypeScript）
   core/engine.ts      # 棋规引擎：洗牌、走子合法性、终局判定（两端共用）
   core/net.ts         # 云开发联机封装
   pages/              # 首页与对局页
 cloudfunctions/room/  # 联机云函数（create/join/sync/move/ask/answer/resign/close）
+dev-notes/            # 开发交接与临时记录（不随站点发布）
+tests/                # 引擎规则测试（node --test）
+.github/workflows/    # CI：规则测试 + 类型检查
 ```
 
 ## 开启联机（Supabase 免费层）
@@ -73,10 +86,13 @@ python -m http.server 8000 --directory docs
 
 ```bash
 npm install
+npm test              # 引擎规则测试（node --test，无需依赖浏览器）
 npm run build:web     # 重新编译网页版引擎 docs/assets/engine.js
 npm run build:engine  # 重新编译云函数引擎 cloudfunctions/room/engine.js
 npm run typecheck
 ```
+
+测试覆盖开局摆子与洗牌、暗子按所在格走法、马腿/炮架/兵过河等走子细节、将帅照面、牵制自杀着、将死判定与 AI 落子合法性。GitHub Actions 在每次 push 和 PR 时跑 `npm test` 与 `npm run typecheck`；站点本身仍由 GitHub Pages 从 `master` 分支自动构建，CI 不参与部署。
 
 ## 微信小程序版
 

@@ -1,0 +1,16 @@
+{
+  "name": "盲下象棋",
+  "short_name": "盲棋",
+  "description": "标准象棋盘，开局暗置洗牌，走完才翻开。一半棋艺，一半运气。",
+  "lang": "zh-CN",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#efe7d8",
+  "theme_color": "#efe7d8",
+  "icons": [
+    { "src": "./assets/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

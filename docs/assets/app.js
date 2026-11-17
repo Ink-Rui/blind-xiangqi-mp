@@ -57,6 +57,7 @@ let cfg = loadCfg();
 let sel = { ...cfg };
 let g = null;
 let snaps = [];
+let moveLog = [];
 let selectedId = null;
 let epoch = 0;
 let aiTimer = 0;
@@ -262,6 +263,54 @@ function syncVibBtn() {
   btn.classList.toggle('muted', !vibOn);
 }
 
+/* ---------------- 音效（WebAudio 合成，无外部资源） ---------------- */
+let soundOn = true;
+try { soundOn = localStorage.getItem('blind-xiangqi-sound') !== 'off'; } catch (e) { /* ignore */ }
+let audioCtx = null;
+
+function audio() {
+  if (!audioCtx) {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return null;
+    audioCtx = new Ctx();
+  }
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+
+function tone(freq, dur, type, gain, delay) {
+  if (!soundOn) return;
+  const ac = audio();
+  if (!ac) return;
+  const t0 = ac.currentTime + (delay || 0);
+  const osc = ac.createOscillator();
+  const vol = ac.createGain();
+  osc.type = type || 'sine';
+  osc.frequency.setValueAtTime(freq, t0);
+  vol.gain.setValueAtTime(0.0001, t0);
+  vol.gain.exponentialRampToValueAtTime(gain || 0.05, t0 + 0.012);
+  vol.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  osc.connect(vol).connect(ac.destination);
+  osc.start(t0);
+  osc.stop(t0 + dur + 0.02);
+}
+
+function sfx(kind) {
+  if (kind === 'select') tone(880, 0.05, 'triangle', 0.03);
+  else if (kind === 'move') tone(420, 0.07, 'sine', 0.05);
+  else if (kind === 'reveal') { tone(660, 0.09, 'triangle', 0.05); tone(990, 0.12, 'triangle', 0.04, 0.07); }
+  else if (kind === 'capture') { tone(180, 0.16, 'sawtooth', 0.05); tone(110, 0.2, 'square', 0.02, 0.02); }
+  else if (kind === 'win') { tone(523, 0.12, 'triangle', 0.05); tone(659, 0.12, 'triangle', 0.05, 0.1); tone(784, 0.22, 'triangle', 0.05, 0.2); }
+  else if (kind === 'lose') { tone(392, 0.16, 'sine', 0.045); tone(311, 0.2, 'sine', 0.045, 0.14); tone(262, 0.26, 'sine', 0.04, 0.3); }
+  else if (kind === 'draw') { tone(392, 0.18, 'sine', 0.04); tone(330, 0.22, 'sine', 0.04, 0.14); }
+}
+
+function syncSoundBtn() {
+  const btn = $('#soundBtn');
+  btn.textContent = soundOn ? '音效开' : '音效关';
+  btn.classList.toggle('muted', !soundOn);
+}
+
 function updateStatus() {
   if (!g) return;
   const chip = $('#turnChip');
@@ -371,17 +420,52 @@ function showReveal(msg) {
   el.classList.remove('hidden');
 }
 
+function newDailyGame(c) {
+  const orig = Math.random;
+  Math.random = mulberry32(dailySeed(c.daily));
+  try {
+    return newGameState(c);
+  } finally {
+    Math.random = orig;
+  }
+}
+
+function dailySeed(key) {
+  let h = 2166136261;
+  for (const ch of key) {
+    h ^= ch.codePointAt(0);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function mulberry32(a) {
+  return function () {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function todayKey() {
+  const d = new Date();
+  return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+}
+
 function beginGame() {
   leaveOnline();
   epoch++;
   clearTimeout(aiTimer);
   aiThinking = false;
   snaps = [];
+  moveLog = [];
   selectedId = null;
   hideEnd();
   hideWaiting();
   closeModal();
-  g = newGameState(cfg);
+  g = cfg.daily ? newDailyGame(cfg) : newGameState(cfg);
   $('#setupView').classList.add('hidden');
   $('#gameView').classList.remove('hidden');
   setHeader('game');
@@ -397,7 +481,7 @@ function beginGame() {
 
 function renderCfgList() {
   if (!g) return;
-  let text = SHUFFLE_NAME[cfg.shuffle] + ' · ' + RULE_NAME[cfg.rule] + ' · '
+  let text = (cfg.daily ? '今日一局 · ' : '') + SHUFFLE_NAME[cfg.shuffle] + ' · ' + RULE_NAME[cfg.rule] + ' · '
     + (cfg.play === 'ai' ? 'AI · ' + LEVEL_NAME[cfg.level] : PLAY_NAME[cfg.play]);
   if (isOnline()) text += ' · 房 ' + online.code;
   $('#modeChip').textContent = text;
@@ -433,6 +517,9 @@ function toSetup() {
   aiThinking = false;
   g = null;
   snaps = [];
+  moveLog = [];
+  delete sel.daily;
+  delete cfg.daily;
   selectedId = null;
   hideEnd();
   hideWaiting();
@@ -471,6 +558,9 @@ async function playMove(p, t) {
   const wasDark = !p.revealed;
   const moverSide = p.revealed ? p.color : halfOwner(p.pos);
   const target = pieceAt(g, t);
+  if (target) sfx('capture');
+  else if (wasDark) sfx('reveal');
+  else sfx('move');
   const from = { r: p.pos.r, c: p.pos.c };
   const snap = {
     pieces: clonePieces(g),
@@ -495,6 +585,16 @@ async function playMove(p, t) {
   }
   p.pos = { r: t.r, c: t.c };
   g.lastMove = { from, to: { r: t.r, c: t.c } };
+  moveLog.push({
+    no: moveLog.length + 1,
+    side: moverSide,
+    piece: CHARS[p.color][p.type],
+    from,
+    to: { r: t.r, c: t.c },
+    capture: target ? CHARS[target.color][target.type] : '',
+    reveal: wasDark,
+    check: false
+  });
 
   syncPieces();
   renderHints();
@@ -561,6 +661,7 @@ function finishMove(p, target, moverSide) {
   const h = hashState(g);
   g.repMap[h] = (g.repMap[h] || 0) + 1;
   const gaveCheck = g.cfg.rule === 'check' && inCheck(g, opp(moverSide)) ? moverSide : null;
+  if (moveLog.length) moveLog[moveLog.length - 1].check = !!gaveCheck;
   g.history.push({ hash: h, checkBy: gaveCheck });
 
   if (g.repMap[h] >= 3) {
@@ -623,6 +724,7 @@ function revertOne() {
   const snap = snaps.pop();
   if (!snap) return false;
   if (g.history.length) g.history.pop();
+  if (moveLog.length) moveLog.pop();
   restoreSnap(snap, [snap.flippedId].filter(Boolean));
   return true;
 }
@@ -681,17 +783,23 @@ function endGame(winner, reason) {
   if (isOnline()) commitOnline();
 }
 
+function resultTitle() {
+  if (!g || !g.winner) return '和棋';
+  if (cfg.play === 'ai') return g.winner === 'red' ? '你赢了' : '陪练获胜';
+  if (isOnline()) return g.winner === online.color ? '你赢了' : '对手获胜';
+  return sideName(g.winner) + '胜';
+}
+
 function renderEnd() {
   if (!g) return;
   const winner = g.winner;
-  let title = '和棋';
-  if (winner) {
-    if (cfg.play === 'ai') title = winner === 'red' ? '你赢了' : '陪练获胜';
-    else if (isOnline()) title = winner === online.color ? '你赢了' : '对手获胜';
-    else title = sideName(winner) + '胜';
-  }
+  const mine = cfg.play === 'ai' ? 'red' : (isOnline() ? online.color : null);
+  if (!winner) sfx('draw');
+  else if (mine && winner !== mine) sfx('lose');
+  else sfx('win');
+
   const titleEl = $('#endTitle');
-  titleEl.textContent = title;
+  titleEl.textContent = resultTitle();
   titleEl.className = 'end-title' + (winner ? (winner === 'red' ? '' : ' black') : ' draw');
   $('#endReason').textContent = g.reason || '';
   $('#endOverlay').classList.remove('hidden');
@@ -700,6 +808,185 @@ function renderEnd() {
 function hideEnd() {
   const el = $('#endOverlay');
   if (el) el.classList.add('hidden');
+}
+
+/* ---------------- 战绩分享图 ---------------- */
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function wrapText(ctx, text, x, y, maxW, lineH) {
+  let line = '';
+  for (const ch of text) {
+    if (ctx.measureText(line + ch).width > maxW && line) {
+      ctx.fillText(line, x, y);
+      line = ch;
+      y += lineH;
+    } else {
+      line += ch;
+    }
+  }
+  if (line) ctx.fillText(line, x, y);
+  return y;
+}
+
+function saveShareCard() {
+  if (!g) return;
+  const W = 750;
+  const H = 1000;
+  const cv = document.createElement('canvas');
+  cv.width = W;
+  cv.height = H;
+  const x = cv.getContext('2d');
+  const serif = '"Songti SC", "Noto Serif SC", "SimSun", serif';
+  const sans = '"PingFang SC", "Microsoft YaHei", sans-serif';
+
+  const bg = x.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, '#f8f1e4');
+  bg.addColorStop(1, '#e7dcc7');
+  x.fillStyle = bg;
+  x.fillRect(0, 0, W, H);
+
+  x.fillStyle = 'rgba(120,95,55,.10)';
+  for (let py = 14; py < H; py += 28) {
+    for (let px = 14; px < W; px += 28) {
+      x.beginPath();
+      x.arc(px, py, 1.5, 0, Math.PI * 2);
+      x.fill();
+    }
+  }
+
+  roundRect(x, 40, 40, W - 80, H - 80, 30);
+  x.fillStyle = 'rgba(255,252,245,.92)';
+  x.fill();
+  x.strokeStyle = 'rgba(120,95,55,.24)';
+  x.lineWidth = 2;
+  x.stroke();
+
+  x.textAlign = 'center';
+  x.fillStyle = '#2b2724';
+  x.font = '700 34px ' + serif;
+  x.fillText('盲 下 象 棋', W / 2, 148);
+  x.fillStyle = '#8a7c69';
+  x.font = '19px ' + sans;
+  x.fillText('开局暗置 · 走完翻开 · 一半棋艺一半运气', W / 2, 186);
+
+  x.fillStyle = g.winner === 'red' ? '#a02c24' : (g.winner ? '#2b2724' : '#857c72');
+  x.font = '800 88px ' + serif;
+  x.fillText(resultTitle(), W / 2, 330);
+
+  x.fillStyle = '#7c7161';
+  x.font = '23px ' + sans;
+  wrapText(x, g.reason || '', W / 2, 386, W - 190, 34);
+
+  x.strokeStyle = 'rgba(120,95,55,.22)';
+  x.setLineDash([6, 8]);
+  x.beginPath();
+  x.moveTo(120, 490);
+  x.lineTo(W - 120, 490);
+  x.stroke();
+  x.setLineDash([]);
+
+  let redCap = 0;
+  let blackCap = 0;
+  for (const p of g.pieces) if (p.captured) (p.color === 'red' ? redCap++ : blackCap++);
+  const playText = cfg.play === 'ai' ? 'AI 陪练 · ' + LEVEL_NAME[cfg.level] : PLAY_NAME[cfg.play];
+  const rows = [
+    ['洗牌模式', SHUFFLE_NAME[cfg.shuffle]],
+    ['胜负规则', RULE_NAME[cfg.rule]],
+    ['对局形式', playText],
+    ['总手数', g.moveNum + ' 手'],
+    ['被吃棋子', '红 ' + redCap + ' · 黑 ' + blackCap]
+  ];
+  x.textAlign = 'left';
+  rows.forEach(([k, v], i) => {
+    const y = 560 + i * 58;
+    x.fillStyle = '#958a7a';
+    x.font = '22px ' + sans;
+    x.fillText(k, 120, y);
+    x.fillStyle = '#2b2724';
+    x.font = '600 23px ' + sans;
+    x.textAlign = 'right';
+    x.fillText(v, W - 120, y);
+    x.textAlign = 'left';
+  });
+
+  const discs = [
+    { cx: 250, label: '?', fill: '#e2d8c4', color: '#9a8d7a', ring: '#b7a98e' },
+    { cx: 375, label: '帅', fill: '#a02c24', color: '#fff', ring: '#7e241d' },
+    { cx: 500, label: '将', fill: '#2b2724', color: '#f3ead8', ring: '#17130f' }
+  ];
+  x.textAlign = 'center';
+  for (const d of discs) {
+    x.beginPath();
+    x.arc(d.cx, 880, 34, 0, Math.PI * 2);
+    x.fillStyle = d.fill;
+    x.fill();
+    x.strokeStyle = d.ring;
+    x.lineWidth = 3;
+    x.stroke();
+    x.fillStyle = d.color;
+    x.font = '700 36px ' + serif;
+    x.fillText(d.label, d.cx, 894);
+  }
+
+  x.fillStyle = '#9a8e7c';
+  x.font = '20px ' + sans;
+  x.fillText('ink-rui.github.io/blind-xiangqi-mp', W / 2, 950);
+
+  cv.toBlob((blob) => {
+    if (!blob) return;
+    const a = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    a.href = url;
+    a.download = '盲下象棋-战绩.png';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    toast('战绩图已生成');
+  });
+}
+
+function moveLogText() {
+  const head = '对局记录：' + SHUFFLE_NAME[cfg.shuffle] + ' · ' + RULE_NAME[cfg.rule] + ' · ' + PLAY_NAME[cfg.play]
+    + '\n括号内为(列,行)，列从左到右、行从红方底线往上，均从 1 起算；翻=落子后翻开，吃=吃掉棋子，将=将军。\n';
+  const lines = moveLog.map((m) => {
+    const side = m.side === 'red' ? '红' : '黑';
+    const from = '(' + (m.from.c + 1) + ',' + (m.from.r + 1) + ')';
+    const to = '(' + (m.to.c + 1) + ',' + (m.to.r + 1) + ')';
+    return m.no + '. ' + side + ' ' + m.piece + ' ' + from + '→' + to
+      + (m.reveal ? ' 翻' : '') + (m.capture ? ' 吃' + m.capture : '') + (m.check ? ' 将' : '');
+  });
+  return head + '\n' + lines.join('\n');
+}
+
+function showMoveLog() {
+  if (!g) return;
+  if (isOnline()) { toast('联机对局的棋谱暂未开放'); return; }
+  if (!moveLog.length) { toast('还没有着法记录'); return; }
+  const text = moveLogText();
+  openModal({
+    title: '棋谱',
+    body: text,
+    okText: '复制棋谱',
+    cancelText: '关闭',
+    onOk() {
+      closeModal();
+      const done = () => toast('棋谱已复制');
+      const fail = () => toast('复制失败，请手动选择文本');
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(fail);
+      } else {
+        fail();
+      }
+    },
+    onCancel() { closeModal(); }
+  });
 }
 
 function onUndo() {
@@ -1058,6 +1345,21 @@ async function copyInviteLink() {
 
 /* ---------------- 交互绑定 ---------------- */
 
+/** 点空白处时按最近的交叉点吸附，扩大棋子的有效点击范围 */
+function nearestPiece(e) {
+  const rect = $('#board').getBoundingClientRect();
+  if (!rect.width) return null;
+  const x = ((e.clientX - rect.left) / rect.width) * 960;
+  const y = ((e.clientY - rect.top) / rect.height) * 1080;
+  const c = Math.round((x - 80) / 100);
+  const r = Math.round((y - 90) / 100);
+  if (r < 0 || r > 9 || c < 0 || c > 8) return null;
+  const dx = Math.abs(x - (80 + 100 * c));
+  const dy = Math.abs(y - (90 + 100 * r));
+  if (Math.hypot(dx, dy) > 62) return null;
+  return pieceAt(g, { r, c });
+}
+
 function onBoardClick(e) {
   if (!g || g.over || g.busy) return;
   if (isOnline()) {
@@ -1074,8 +1376,7 @@ function onBoardClick(e) {
   }
 
   const el = e.target.closest('.piece');
-  if (!el) return;
-  const p = g.pieces.find((q) => q.id === el.dataset.id);
+  const p = el ? g.pieces.find((q) => q.id === el.dataset.id) : nearestPiece(e);
   if (!p || !p.pos) return;
 
   if (cfg.play === 'ai' && g.turn === 'black') { toast('陪练思考中…'); return; }
@@ -1088,6 +1389,7 @@ function onBoardClick(e) {
 
   selectedId = selectedId === p.id ? null : p.id;
   vibrate(8);
+  sfx('select');
   syncPieces();
   renderHints();
   updateStatus();
@@ -1097,6 +1399,11 @@ function bind() {
   $('#startBtn').addEventListener('click', () => {
     cfg = { ...sel };
     saveCfg();
+    beginGame();
+  });
+  $('#dailyBtn').addEventListener('click', () => {
+    cfg = { play: 'ai', shuffle: 'A1', rule: 'check', level: 'normal', daily: todayKey() };
+    sel = { ...cfg };
     beginGame();
   });
   $('#board').addEventListener('click', onBoardClick);
@@ -1122,6 +1429,15 @@ function bind() {
   $('#helpBtnGame').addEventListener('click', () => {
     openModal({ title: '玩法速览', body: HELP_TEXT, okText: '知道了', cancelText: '' });
   });
+  $('#soundBtn').addEventListener('click', () => {
+    soundOn = !soundOn;
+    try { localStorage.setItem('blind-xiangqi-sound', soundOn ? 'on' : 'off'); } catch (e) { /* ignore */ }
+    syncSoundBtn();
+    sfx('select');
+  });
+  $('#shareBtn').addEventListener('click', saveShareCard);
+  $('#logBtn').addEventListener('click', showMoveLog);
+  $('#logBtnEnd').addEventListener('click', showMoveLog);
   $('#vibBtn').addEventListener('click', () => {
     vibOn = !vibOn;
     try { localStorage.setItem('blind-xiangqi-vib', vibOn ? 'on' : 'off'); } catch (e) { /* ignore */ }
@@ -1148,6 +1464,7 @@ function bind() {
 buildGrid();
 renderOpts();
 syncVibBtn();
+syncSoundBtn();
 bind();
 if (window.ResizeObserver) new ResizeObserver(fitBoard).observe($('#board'));
 

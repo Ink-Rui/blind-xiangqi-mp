@@ -9,7 +9,15 @@
 <meta property="og:title" content="盲下象棋 · 打开即玩" />
 <meta property="og:description" content="标准象棋盘，开局暗置洗牌，走完才翻开。一半棋艺，一半运气。" />
 <meta property="og:type" content="website" />
+<meta property="og:image" content="https://ink-rui.github.io/blind-xiangqi-mp/assets/og.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:image" content="https://ink-rui.github.io/blind-xiangqi-mp/assets/og.png" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
+<link rel="icon" type="image/png" sizes="192x192" href="./assets/icon-192.png" />
+<link rel="apple-touch-icon" href="./assets/apple-touch-icon.png" />
+<link rel="manifest" href="./manifest.webmanifest" />
 <link rel="stylesheet" href="./assets/style.css" />
 </head>
 <body>
@@ -78,6 +86,7 @@
 
       <div class="start-row" id="startRow">
         <button type="button" id="startBtn" class="btn primary big">开始对局</button>
+        <button type="button" id="dailyBtn" class="btn ghost daily" title="每天同一副牌，和 AI 交手">今日一局</button>
       </div>
       <p class="fineprint">打开即玩，无需安装。支持手机与桌面浏览器。</p>
     </section>
@@ -102,6 +111,7 @@
       <div class="gh-title">对局中<small>V1 核心玩法 · 暗子走完翻开</small></div>
       <div class="gh-actions">
         <span id="revealChip" class="pill dark hidden">翻开：—</span>
+        <button type="button" id="soundBtn" class="pill">音效开</button>
         <button type="button" id="vibBtn" class="pill">震动开</button>
         <button type="button" id="restartBtn" class="pill accent">重开</button>
       </div>
@@ -114,6 +124,7 @@
       <span id="noCapChip" class="chip">无吃子 0/120</span>
       <span class="grow"></span>
       <button type="button" id="undoBtn" class="pill">悔棋</button>
+      <button type="button" id="logBtn" class="pill">棋谱</button>
       <button type="button" id="resignBtn" class="pill">认输</button>
     </div>
 
@@ -144,6 +155,8 @@
             <p id="endReason" class="end-reason"></p>
             <div class="end-actions">
               <button type="button" id="againBtn" class="big">再来一局</button>
+              <button type="button" id="shareBtn" class="big gray">保存战绩图</button>
+              <button type="button" id="logBtnEnd" class="big gray">查看棋谱</button>
               <button type="button" id="toSetupBtn" class="big gray">返回设置</button>
             </div>
           </div>

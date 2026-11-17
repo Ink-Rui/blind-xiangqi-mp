@@ -714,7 +714,16 @@ a { color: var(--red); }
   font-weight: 700;
   color: var(--accent);
 }
-#setupView .start-row { margin-top: 6px; }
+#setupView .start-row { margin-top: 6px; display: flex; gap: 8px; }
+#setupView .btn.daily {
+  flex: 0 0 30%;
+  width: auto;
+  margin-top: 0;
+  padding: 14px 8px;
+  font-weight: 600;
+  font-size: 13.5px;
+  white-space: nowrap;
+}
 #setupView .btn {
   border: none;
   border-radius: 12px;
