@@ -9,11 +9,12 @@
 <meta property="og:title" content="盲下象棋 · 打开即玩" />
 <meta property="og:description" content="标准象棋盘，开局暗置洗牌，走完才翻开。一半棋艺，一半运气。" />
 <meta property="og:type" content="website" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
 <link rel="stylesheet" href="./assets/style.css" />
 </head>
 <body>
 <div class="app">
-  <header class="topbar">
+  <header id="brandBar" class="topbar">
     <div class="brand">
       <div class="brand-mark">盲</div>
       <div class="brand-text">
@@ -24,6 +25,18 @@
     <div class="top-actions">
       <button type="button" id="helpBtn" class="mini-btn">玩法</button>
       <a class="mini-btn" href="https://github.com/Ink-Rui/blind-xiangqi-mp" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </header>
+
+  <header id="gameBar" class="gamebar hidden">
+    <button type="button" id="backBtn" class="icon-btn" aria-label="返回设置">‹</button>
+    <div class="top-title">
+      <h1 id="pageTitle">盲下象棋 · 对局</h1>
+      <p id="pageSub">暗子走完翻开 · 一半棋艺一半运气</p>
+    </div>
+    <div class="top-actions">
+      <button type="button" id="helpBtnGame" class="pill">规则</button>
+      <a class="pill" href="https://github.com/Ink-Rui/blind-xiangqi-mp" target="_blank" rel="noopener">GitHub</a>
     </div>
   </header>
 
@@ -85,12 +98,26 @@
   </main>
 
   <main id="gameView" class="game hidden">
-    <div class="board-wrap">
-      <div class="statusbar">
-        <div class="turn"><span id="turnDot" class="turn-dot"></span><span id="turnText">红方行棋</span></div>
-        <div class="meta"><span id="moveText">第 1 手</span><span class="sep">·</span><span id="noCapText">无吃子 0/120</span></div>
+    <div class="game-head">
+      <div class="gh-title">对局中<small>V1 核心玩法 · 暗子走完翻开</small></div>
+      <div class="gh-actions">
+        <span id="revealChip" class="pill dark hidden">翻开：—</span>
+        <button type="button" id="vibBtn" class="pill">震动开</button>
+        <button type="button" id="restartBtn" class="pill accent">重开</button>
       </div>
+    </div>
 
+    <div class="statusline">
+      <span id="turnChip" class="turn-chip red">红方行棋</span>
+      <span id="modeChip" class="chip">A1 半盘内洗</span>
+      <span id="moveChip" class="chip">第 1 手</span>
+      <span id="noCapChip" class="chip">无吃子 0/120</span>
+      <span class="grow"></span>
+      <button type="button" id="undoBtn" class="pill">悔棋</button>
+      <button type="button" id="resignBtn" class="pill">认输</button>
+    </div>
+
+    <div class="board-zone">
       <div id="board" class="board" aria-label="象棋棋盘">
         <svg id="boardGrid" class="grid" viewBox="0 0 960 1080" preserveAspectRatio="none" aria-hidden="true"></svg>
         <div id="marks" class="layer marks" aria-hidden="true"></div>
@@ -104,8 +131,8 @@
             <h2 id="roomCodeText" class="end-title room-code">------</h2>
             <p class="end-reason">把房间码或邀请链接发给朋友，对方打开页面即可加入。</p>
             <div class="end-actions">
-              <button type="button" id="copyLinkBtn" class="btn primary">复制链接</button>
-              <button type="button" id="cancelRoomBtn" class="btn ghost">取消房间</button>
+              <button type="button" id="copyLinkBtn" class="big">复制链接</button>
+              <button type="button" id="cancelRoomBtn" class="big gray">取消房间</button>
             </div>
           </div>
         </div>
@@ -116,37 +143,27 @@
             <h2 id="endTitle" class="end-title">红方胜</h2>
             <p id="endReason" class="end-reason"></p>
             <div class="end-actions">
-              <button type="button" id="againBtn" class="btn primary">再来一局</button>
-              <button type="button" id="toSetupBtn" class="btn ghost">返回设置</button>
+              <button type="button" id="againBtn" class="big">再来一局</button>
+              <button type="button" id="toSetupBtn" class="big gray">返回设置</button>
             </div>
           </div>
         </div>
       </div>
-
-      <div class="actions">
-        <button type="button" id="undoBtn" class="btn ghost">悔棋</button>
-        <button type="button" id="resignBtn" class="btn ghost">认输</button>
-        <button type="button" id="restartBtn" class="btn ghost">重开</button>
-        <button type="button" id="backBtn" class="btn ghost">设置</button>
-      </div>
-      <p class="hint" id="hintText">点击己方可操作的棋子，再点亮点落子。</p>
     </div>
 
-    <aside class="side">
-      <div class="panel side-card">
-        <h3>本局设置</h3>
-        <dl id="cfgList" class="cfg-list"></dl>
+    <div class="trays">
+      <div class="tray">
+        <b class="tray-b">被吃 · 红子</b>
+        <div id="trayRed" class="tray-list"><span class="tray-empty">尚无</span></div>
       </div>
-      <div class="panel side-card">
-        <h3>提示</h3>
-        <ul class="tips">
-          <li>暗子背面朝上，按所在位置决定走法。</li>
-          <li>虚线框是上一步的起点与落点。</li>
-          <li>误吃己方将帅会直接判负，吃暗子前先想清楚。</li>
-          <li>将军规则只对已翻开的将帅生效。</li>
-        </ul>
+      <div class="tray">
+        <b class="tray-b">被吃 · 黑子</b>
+        <div id="trayBlack" class="tray-list"><span class="tray-empty">尚无</span></div>
       </div>
-    </aside>
+    </div>
+
+    <p class="hint" id="hintText">点击己方可操作的棋子，再点亮点落子。</p>
+    <p class="notes">规则要点：暗子按所在位置走法行棋，走完翻开；明子暗子均可吃暗子（可能误吃己方将帅 → 赢方选择悔棋或判负）；无合法走法判负；120 半回合无吃子判和。</p>
   </main>
 
   <footer class="foot">
@@ -160,8 +177,8 @@
     <h3 id="modalTitle">提示</h3>
     <p id="modalBody" class="modal-body"></p>
     <div class="modal-actions">
-      <button type="button" id="modalCancel" class="btn ghost">取消</button>
-      <button type="button" id="modalOk" class="btn primary">确定</button>
+      <button type="button" id="modalCancel" class="big gray">取消</button>
+      <button type="button" id="modalOk" class="big">确定</button>
     </div>
   </div>
 </div>

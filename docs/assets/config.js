@@ -9,5 +9,6 @@
  * anon key 是公开密钥，放在前端是安全的；真正的权限由 schema.sql 里的 RLS 策略控制。
  * 两项留空时，页面仍可玩双人同屏与人机，只是「联机对战」会提示未配置。
  */
-export const SUPABASE_URL = '';
-export const SUPABASE_ANON_KEY = '';
+export const SUPABASE_URL = 'https://buayeedlcgaijudandsy.supabase.co';
+export const SUPABASE_ANON_KEY =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ1YXllZWRsY2dhaWp1ZGFuZHN5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQ3ODA5ODIsImV4cCI6MjExMDM1Njk4Mn0.XOTlYAzwuej8Bk8PK2i9i4M4cqgMAA2fhyQaHDKcwHw';

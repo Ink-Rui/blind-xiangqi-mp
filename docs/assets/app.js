@@ -4,7 +4,7 @@
  */
 import {
   newGameState, legalTargets, pieceAt, operable, halfOwner, inCheck, hasLegal,
-  hashState, clonePieces, pickAIMove, opp, CHARS, PIECE_XY
+  hashState, clonePieces, pickAIMove, opp, CHARS, NAMES, PIECE_XY
 } from './engine.js';
 import { ONLINE_READY, createRoom, fetchRoom, markJoined, pushState } from './net.js';
 
@@ -37,6 +37,8 @@ const SHUFFLE_NAME = { A1: 'A1 半盘内洗', A2: 'A2 跨河全混', B: 'B 全�
 const RULE_NAME = { check: '将军规则', kill: '吃将即胜' };
 const PLAY_NAME = { hot: '双人同屏', ai: 'AI 陪练', online: '联机对战' };
 const LEVEL_NAME = { easy: '简单', normal: '普通', hard: '困难' };
+/** 暗子选中时显示的「位置型棋种」单字（与真实身份无关，仅提示该格走法） */
+const SLOT_CHAR = { K: '将', A: '士', B: '象', N: '马', R: '车', C: '炮', P: '兵' };
 
 const HELP_TEXT = [
   '1. 开局除将帅外，棋子背面朝上随机摆放（B 模式连将帅也暗置）。',
@@ -61,6 +63,8 @@ let aiTimer = 0;
 let aiThinking = false;
 let pieceEls = new Map();
 let toastTimer = 0;
+let vibOn = true;
+try { vibOn = localStorage.getItem('blind-xiangqi-vib') !== 'off'; } catch (e) { /* ignore */ }
 let modalFns = { ok: null, cancel: null };
 /** 联机会话：{ code, color, version, joined, timer, pulling, localBusy, pending, fail } */
 let online = null;
@@ -147,7 +151,7 @@ function fitBoard() {
   if (!board) return;
   const w = board.clientWidth;
   if (!w) return;
-  board.style.setProperty('--pfont', Math.round(w * 0.054) + 'px');
+  board.style.setProperty('--pfont', Math.round(w * 0.05) + 'px');
 }
 
 /* ---------------- 棋子渲染 ---------------- */
@@ -179,10 +183,15 @@ function syncPieces() {
     el.classList.toggle('black', p.revealed && p.color === 'black');
     el.classList.toggle('dark', !p.revealed);
     el.classList.toggle('sel', p.id === selectedId);
-    el.querySelector('.glyph').textContent = p.revealed ? CHARS[p.color][p.type] : '';
+    const glyph = el.querySelector('.glyph');
+    const typeHint = !p.revealed && p.id === selectedId;
+    glyph.textContent = p.revealed
+      ? CHARS[p.color][p.type]
+      : (typeHint ? (SLOT_CHAR[p.slotType] || '?') : '?');
+    glyph.classList.toggle('typehint', typeHint);
     el.setAttribute('aria-label', p.revealed
       ? (p.color === 'red' ? '红方' : '黑方') + CHARS[p.color][p.type]
-      : '暗子');
+      : (typeHint ? '暗子，此位置按' + NAMES[p.slotType] + '走' : '暗子'));
     if (p.revealed && el.dataset.rev !== '1') {
       el.dataset.rev = '1';
       el.classList.add('flip');
@@ -242,24 +251,46 @@ function sideName(side) {
   return side === 'red' ? '红方' : '黑方';
 }
 
+function vibrate(ms) {
+  if (!vibOn || typeof navigator.vibrate !== 'function') return;
+  try { navigator.vibrate(ms); } catch (e) { /* 部分浏览器不支持 */ }
+}
+
+function syncVibBtn() {
+  const btn = $('#vibBtn');
+  btn.textContent = vibOn ? '震动开' : '震动关';
+  btn.classList.toggle('muted', !vibOn);
+}
+
 function updateStatus() {
   if (!g) return;
-  $('#turnDot').className = 'turn-dot' + (g.turn === 'black' ? ' black' : '');
+  const chip = $('#turnChip');
+  let cls = 'turn-chip';
   let text;
   if (g.over) {
     text = g.winner ? sideName(g.winner) + '胜' : '和棋';
+    cls += ' over';
   } else if (cfg.play === 'ai') {
-    text = g.turn === 'red' ? '轮到你走棋' : '陪练思考中…';
+    const mine = g.turn === 'red';
+    text = mine ? '轮到你走棋' : '陪练思考中…';
+    cls += mine ? ' red' : ' black thinking';
   } else if (isOnline()) {
-    text = !online.joined ? '等待对手加入' : (g.turn === online.color ? '轮到你走棋' : '等待对方走棋…');
+    const mine = g.turn === online.color;
+    text = !online.joined ? '等待对手加入' : (mine ? '轮到你走棋' : '等待对方走棋…');
+    cls += mine ? ' red' : ' black';
   } else {
     text = sideName(g.turn) + '行棋';
+    cls += g.turn === 'red' ? ' red' : ' black';
   }
-  $('#turnText').textContent = text;
-  $('#moveText').textContent = '第 ' + g.moveNum + ' 手';
-  $('#noCapText').textContent = '无吃子 ' + g.noCap + '/120';
+  chip.className = cls;
+  chip.textContent = text;
+
+  $('#moveChip').textContent = '第 ' + g.moveNum + ' 手';
+  $('#noCapChip').textContent = '无吃子 ' + g.noCap + '/120';
   $('#undoBtn').disabled = !!g.over || isOnline();
   $('#resignBtn').disabled = !!g.over;
+  renderCfgList();
+  renderTrays();
 
   const tip = $('#hintText');
   if (g.over) {
@@ -271,7 +302,14 @@ function updateStatus() {
   } else if (isOnline() && g.turn !== online.color) {
     tip.textContent = '等待对方走棋…';
   } else if (selectedId) {
-    tip.textContent = '已选中棋子，点击亮点落子。';
+    const p = g.pieces.find((q) => q.id === selectedId);
+    if (p && !p.revealed && p.slotType) {
+      tip.textContent = '暗子：按此位置的「' + NAMES[p.slotType] + '」走法行棋，点亮点落子后翻开。';
+    } else if (p) {
+      tip.textContent = '已选中' + CHARS[p.color][p.type] + '，点击亮点落子。';
+    } else {
+      tip.textContent = '已选中棋子，点击亮点落子。';
+    }
   } else if (cfg.play === 'ai') {
     tip.textContent = '点击己方可操作的棋子，再点亮点落子。';
   } else if (isOnline()) {
@@ -312,6 +350,27 @@ function closeModal() {
 
 /* ---------------- 对局流程 ---------------- */
 
+function setHeader(mode) {
+  const game = mode === 'game';
+  $('#brandBar').classList.toggle('hidden', game);
+  $('#gameBar').classList.toggle('hidden', !game);
+  $('#pageTitle').textContent = game ? '盲下象棋 · 对局' : '盲下象棋';
+  $('#pageSub').textContent = game
+    ? '暗子走完翻开 · 一半棋艺一半运气'
+    : '标准棋盘 · 暗置洗牌 · 走完翻开';
+  if (game) {
+    const rc = $('#revealChip');
+    rc.textContent = '翻开：—';
+    rc.classList.add('hidden');
+  }
+}
+
+function showReveal(msg) {
+  const el = $('#revealChip');
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+
 function beginGame() {
   leaveOnline();
   epoch++;
@@ -325,6 +384,7 @@ function beginGame() {
   g = newGameState(cfg);
   $('#setupView').classList.add('hidden');
   $('#gameView').classList.remove('hidden');
+  setHeader('game');
   renderCfgList();
   rebuildPieces();
   markLayer.innerHTML = '';
@@ -336,18 +396,34 @@ function beginGame() {
 }
 
 function renderCfgList() {
-  const rows = [
-    ['洗牌', SHUFFLE_NAME[cfg.shuffle]],
-    ['规则', RULE_NAME[cfg.rule]],
-    ['模式', cfg.play === 'ai' ? 'AI 陪练 · ' + LEVEL_NAME[cfg.level] : PLAY_NAME[cfg.play]]
-  ];
-  if (isOnline()) {
-    rows.push(['房间', online.code + ' · 你执' + (online.color === 'red' ? '红' : '黑')]);
-    rows.push(['对手', online.joined ? '已加入' : '等待加入']);
+  if (!g) return;
+  let text = SHUFFLE_NAME[cfg.shuffle] + ' · ' + RULE_NAME[cfg.rule] + ' · '
+    + (cfg.play === 'ai' ? 'AI · ' + LEVEL_NAME[cfg.level] : PLAY_NAME[cfg.play]);
+  if (isOnline()) text += ' · 房 ' + online.code;
+  $('#modeChip').textContent = text;
+  $('#modeChip').title = text;
+}
+
+/** 被吃掉的棋子托盘：红/黑各一列，行数随被吃数量增长 */
+function renderTrays() {
+  if (!g) return;
+  const red = [];
+  const black = [];
+  for (const p of g.pieces) {
+    if (!p.captured) continue;
+    (p.color === 'red' ? red : black).push(CHARS[p.color][p.type]);
   }
-  $('#cfgList').innerHTML = rows
-    .map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`)
-    .join('');
+  paintTray('#trayRed', red, 'red');
+  paintTray('#trayBlack', black, 'black');
+}
+
+function paintTray(sel, chars, color) {
+  const wrap = $(sel);
+  if (!chars.length) {
+    wrap.innerHTML = '<span class="tray-empty">尚无</span>';
+    return;
+  }
+  wrap.innerHTML = chars.map((c) => '<span class="tp ' + color + '">' + c + '</span>').join('');
 }
 
 function toSetup() {
@@ -364,6 +440,7 @@ function toSetup() {
   history.replaceState(null, '', location.pathname);
   $('#gameView').classList.add('hidden');
   $('#setupView').classList.remove('hidden');
+  setHeader('setup');
   renderOpts();
 }
 
@@ -379,7 +456,7 @@ function scheduleAI() {
     const mv = pickAIMove(g, 'black');
     if (!mv) { updateStatus(); return; }
     playMove(mv.p, mv.t);
-  }, 520 + Math.random() * 380);
+  }, 620 + Math.random() * 420);
 }
 
 async function playMove(p, t) {
@@ -422,6 +499,11 @@ async function playMove(p, t) {
   syncPieces();
   renderHints();
   updateStatus();
+  const movedEl = pieceEls.get(p.id);
+  if (movedEl) {
+    movedEl.classList.add('settle');
+    setTimeout(() => movedEl.classList.remove('settle'), 320);
+  }
 
   await sleep(wasDark ? 300 : 200);
   if (ep !== epoch || !g) return;
@@ -438,7 +520,10 @@ async function playMove(p, t) {
   } else if (target) {
     msg = sideName(moverSide) + '吃掉' + (target.color === 'red' ? '红' : '黑') + '·' + CHARS[target.color][target.type];
   }
-  if (msg) toast(msg, wasDark ? 'reveal' : '');
+  if (msg) {
+    showReveal(msg);
+    vibrate(wasDark ? 18 : 10);
+  }
 
   if (wasDark) {
     await sleep(260);
@@ -870,6 +955,7 @@ function beginOnlineGame(room, color) {
   saveRoom(room.code, color);
   $('#setupView').classList.add('hidden');
   $('#gameView').classList.remove('hidden');
+  setHeader('game');
   renderCfgList();
   rebuildPieces();
   markLayer.innerHTML = '';
@@ -1001,6 +1087,7 @@ function onBoardClick(e) {
   }
 
   selectedId = selectedId === p.id ? null : p.id;
+  vibrate(8);
   syncPieces();
   renderHints();
   updateStatus();
@@ -1032,6 +1119,15 @@ function bind() {
   $('#helpBtn').addEventListener('click', () => {
     openModal({ title: '玩法速览', body: HELP_TEXT, okText: '知道了', cancelText: '' });
   });
+  $('#helpBtnGame').addEventListener('click', () => {
+    openModal({ title: '玩法速览', body: HELP_TEXT, okText: '知道了', cancelText: '' });
+  });
+  $('#vibBtn').addEventListener('click', () => {
+    vibOn = !vibOn;
+    try { localStorage.setItem('blind-xiangqi-vib', vibOn ? 'on' : 'off'); } catch (e) { /* ignore */ }
+    syncVibBtn();
+    vibrate(12);
+  });
 
   $('#modalOk').addEventListener('click', () => {
     const fn = modalFns.ok;
@@ -1051,6 +1147,7 @@ function bind() {
 
 buildGrid();
 renderOpts();
+syncVibBtn();
 bind();
 if (window.ResizeObserver) new ResizeObserver(fitBoard).observe($('#board'));
 
