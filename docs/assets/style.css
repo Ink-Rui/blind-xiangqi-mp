@@ -123,6 +123,7 @@ a { color: var(--red); }
   font-weight: 700;
 }
 .pill.muted { opacity: 0.45; }
+.pill.warn { color: var(--red); box-shadow: inset 0 0 0 1px rgba(181, 56, 46, 0.35); }
 .pill:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* ---------- 设置页 ---------- */
@@ -792,8 +793,36 @@ a { color: var(--red); }
   #setupView.setup { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 520px) {
-  #setupView .options, #setupView .options.two { grid-template-columns: minmax(0, 1fr); }
+  #setupView .options, #setupView .options.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .brand-text h1 { font-size: 18px; }
+}
+
+/* 手机首屏：压缩设置页纵向占用，让「开始对局」落在首屏内 */
+@media (max-width: 560px) {
+  .topbar { margin-bottom: 12px; }
+  .brand-mark { width: 38px; height: 38px; border-radius: 11px; font-size: 22px; }
+  .brand-text p { font-size: 11px; }
+  .mini-btn { height: 30px; padding: 0 11px; font-size: 12px; }
+
+  #setupView .panel { padding: 13px 13px 12px; border-radius: 14px; }
+  #setupView .panel-title { margin-bottom: 10px; font-size: 15.5px; }
+  #setupView .group { margin-bottom: 11px; }
+  #setupView .group-head { margin-bottom: 6px; gap: 5px; }
+  #setupView .group-head span { font-size: 12.5px; }
+  #setupView .group-head em { font-size: 10.5px; }
+  #setupView .options, #setupView .options.two { gap: 6px; }
+  #setupView .opt { padding: 7px 9px; border-radius: 10px; }
+  #setupView .opt-name { font-size: 12.5px; margin-bottom: 2px; }
+  #setupView .opt-desc { font-size: 10.5px; line-height: 1.35; }
+  #setupView .opt.on::after { top: 5px; right: 7px; font-size: 11px; }
+  #setupView .start-row { margin-top: 2px; gap: 6px; }
+  #setupView .btn.big { padding: 12px 14px; font-size: 15px; }
+  #setupView .btn.daily { flex: 0 0 31%; padding: 12px 4px; font-size: 12.5px; }
+  #setupView .fineprint { margin-top: 8px; font-size: 10.5px; }
+  #setupView .online-row > .btn { height: 38px; }
+  #setupView .input { height: 38px; font-size: 14px; }
+
+  .guide .steps li { margin-bottom: 7px; font-size: 12px; line-height: 1.5; }
 }
 
 /* ---------- 小屏微调 ---------- */
@@ -801,4 +830,27 @@ a { color: var(--red); }
   .app { padding: 8px 10px 20px; }
   .top-title p { font-size: 10.5px; }
   .hint { font-size: 11.5px; }
+}
+
+/* ---------- 键盘可达性 ---------- */
+button:focus-visible, a:focus-visible, input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.piece:focus-visible, .target:focus-visible { outline: none; }
+.piece:focus-visible .glyph {
+  outline: 3px solid var(--gold);
+  outline-offset: -1px;
+  box-shadow: 0 0 0 5px rgba(217, 164, 65, 0.3), 0 4px 10px rgba(43, 39, 36, 0.3);
+}
+.target:focus-visible::before { box-shadow: 0 0 0 4px rgba(181, 56, 46, 0.35); }
+
+/* ---------- 减少动效 ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }

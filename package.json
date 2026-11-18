@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "盲下象棋 · 网页版（打开即玩）+ 微信小程序（原生 + TypeScript）",
+  "description": "盲下象棋 · 网页版（打开即玩，支持联机与离线缓存）",
   "scripts": {
     "test": "node --test tests/",
     "typecheck": "tsc --noEmit",

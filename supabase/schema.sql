@@ -25,6 +25,12 @@ create policy rooms_update on public.rooms for update to anon using (true) with 
 
 grant select, insert, update on public.rooms to anon;
 
+-- 在线状态：双方各自定期更新自己那一列，用于显示“对手在线 / 可能已离开”
+alter table public.rooms add column if not exists host_seen timestamptz;
+alter table public.rooms add column if not exists guest_seen timestamptz;
+
+create index if not exists rooms_updated_at_idx on public.rooms (updated_at);
+
 -- 可选：定期清理两天前的房间（需要项目开启 pg_cron 扩展）
 -- select cron.schedule('clean-blind-xiangqi-rooms', '0 4 * * *',
 --   $$delete from public.rooms where updated_at < now() - interval '2 days'$$);

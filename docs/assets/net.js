@@ -87,3 +87,20 @@ export async function pushState(code, version, state) {
   );
   return rows && rows[0] ? rows[0] : null;
 }
+
+/**
+ * 心跳：只更新自己一侧的在线时间，不动 version，避免打断正常同步。
+ * 表里没有 host_seen/guest_seen 列时会抛错，由调用方静默关闭在线状态显示。
+ */
+export async function touchRoom(code, color) {
+  const column = color === 'red' ? 'host_seen' : 'guest_seen';
+  const rows = await request(
+    BASE + '?code=eq.' + encodeURIComponent(code) + '&select=code',
+    {
+      method: 'PATCH',
+      headers: headers({ Prefer: 'return=representation' }),
+      body: JSON.stringify({ [column]: new Date().toISOString() })
+    }
+  );
+  return rows && rows[0] ? rows[0] : null;
+}

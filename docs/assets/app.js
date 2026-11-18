@@ -4,9 +4,10 @@
  */
 import {
   newGameState, legalTargets, pieceAt, operable, halfOwner, inCheck, hasLegal,
-  hashState, clonePieces, pickAIMove, opp, CHARS, NAMES, PIECE_XY
+  clonePieces, pickAIMove, opp, CHARS, NAMES, PIECE_XY
 } from './engine.js';
-import { ONLINE_READY, createRoom, fetchRoom, markJoined, pushState } from './net.js';
+import { ONLINE_READY, createRoom, fetchRoom, markJoined, pushState, touchRoom } from './net.js';
+import { sideName, recordPosition, repetitionOutcome, noCaptureOutcome, kingCaptureOutcome } from './rules.js';
 
 const $ = (s) => document.querySelector(s);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -247,10 +248,6 @@ function renderHints() {
 }
 
 /* ---------------- 状态与提示 ---------------- */
-
-function sideName(side) {
-  return side === 'red' ? '红方' : '黑方';
-}
 
 function vibrate(ms) {
   if (!vibOn || typeof navigator.vibrate !== 'function') return;
@@ -649,37 +646,20 @@ function detectFaceOff() {
 function finishMove(p, target, moverSide) {
   if (!g) return;
 
-  if (target && target.type === 'K') {
-    if (target.color === moverSide) {
-      misEatFlow(p, target, moverSide);
-      return;
-    }
-    endGame(moverSide, sideName(moverSide) + '吃掉对方' + (target.color === 'red' ? '帅' : '将'));
+  const king = kingCaptureOutcome(target, moverSide);
+  if (king) {
+    if (king.self) misEatFlow(p, target, moverSide);
+    else endGame(king.winner, king.reason);
     return;
   }
 
-  const h = hashState(g);
-  g.repMap[h] = (g.repMap[h] || 0) + 1;
-  const gaveCheck = g.cfg.rule === 'check' && inCheck(g, opp(moverSide)) ? moverSide : null;
+  const { hash, gaveCheck } = recordPosition(g, moverSide);
   if (moveLog.length) moveLog[moveLog.length - 1].check = !!gaveCheck;
-  g.history.push({ hash: h, checkBy: gaveCheck });
 
-  if (g.repMap[h] >= 3) {
-    const idx = g.history.map((e) => e.hash).lastIndexOf(h, g.history.length - 2);
-    const seg = g.history.slice(Math.max(idx, 0));
-    const givers = [];
-    for (const e of seg) if (e.checkBy && givers.indexOf(e.checkBy) < 0) givers.push(e.checkBy);
-    if (givers.length === 1) {
-      endGame(opp(givers[0]), sideName(givers[0]) + '长将（重复局面判负）');
-      return;
-    }
-    endGame(null, '三次重复局面，判和');
-    return;
-  }
-  if (g.noCap >= 120) {
-    endGame(null, '120 个半回合无吃子，判和');
-    return;
-  }
+  const rep = repetitionOutcome(g, hash);
+  if (rep) { endGame(rep.winner, rep.reason); return; }
+  const quiet = noCaptureOutcome(g);
+  if (quiet) { endGame(quiet.winner, quiet.reason); return; }
 
   g.turn = opp(g.turn);
   g.moveNum++;
@@ -1088,7 +1068,9 @@ function saveRoom(code, color) {
 
 function leaveOnline() {
   stopPolling();
+  stopPresence();
   online = null;
+  updatePresence(null);
 }
 
 function encodeState(state) {
@@ -1124,6 +1106,73 @@ function stopPolling() {
   }
 }
 
+function stopPresence() {
+  if (online && online.seenTimer) {
+    clearInterval(online.seenTimer);
+    online.seenTimer = 0;
+  }
+}
+
+/** 对手在线时间：红方看 guest_seen，黑方看 host_seen */
+function opponentSeen(room) {
+  if (!online) return null;
+  const key = online.color === 'red' ? 'guest_seen' : 'host_seen';
+  return room[key] || null;
+}
+
+function updatePresence(room) {
+  const chip = $('#presenceChip');
+  if (!chip) return;
+  if (!online) {
+    chip.classList.add('hidden');
+    return;
+  }
+  if (online.offline) {
+    chip.textContent = '连接中断，重连中…';
+    chip.classList.remove('hidden', 'muted');
+    chip.classList.add('warn');
+    return;
+  }
+  chip.classList.remove('warn');
+  if (online.presenceOff) {
+    chip.classList.add('hidden');
+    return;
+  }
+  if (room) online.oppSeen = opponentSeen(room);
+  const seen = online.oppSeen;
+  if (!seen) {
+    chip.textContent = '等待对手上线';
+    chip.classList.remove('muted');
+    chip.classList.remove('hidden');
+    return;
+  }
+  const sec = Math.max(0, Math.round((Date.now() - new Date(seen).getTime()) / 1000));
+  if (sec < 40) chip.textContent = '对手在线';
+  else if (sec < 120) chip.textContent = '对手 ' + sec + ' 秒前在线';
+  else chip.textContent = '对手可能已离开';
+  chip.classList.toggle('muted', sec >= 120);
+  chip.classList.remove('hidden');
+}
+
+function startPresence() {
+  stopPresence();
+  if (!online) return;
+  const ping = async () => {
+    if (!online || online.presenceOff) return;
+    try {
+      await touchRoom(online.code, online.color);
+    } catch (err) {
+      // 只有表里缺列时才永久关闭在线状态；网络抖动等下一次心跳再试
+      if (online && /PGRST204|column|400/.test(err.message || '')) {
+        online.presenceOff = true;
+        updatePresence(null);
+      }
+    }
+  };
+  ping();
+  online.seenTimer = setInterval(ping, 20000);
+}
+
 function startPolling() {
   stopPolling();
   if (!online) return;
@@ -1138,13 +1187,34 @@ async function pullRoom() {
   try {
     const room = await fetchRoom(online.code);
     if (!online) return;
-    if (!room) { stopPolling(); toast('房间已不存在'); return; }
+    if (!room) {
+      stopPolling();
+      stopPresence();
+      online = null;
+      updatePresence(null);
+      openModal({
+        title: '房间已失效',
+        body: '这个房间已被清理或不存在。\n可以让对手重新建房，或回到设置新建一局。',
+        okText: '返回设置',
+        cancelText: '',
+        onOk() { closeModal(); toSetup(); }
+      });
+      return;
+    }
+    online.offline = false;
     online.fail = 0;
     if (room.version > online.version) applyRemote(room);
+    else online.oppSeen = opponentSeen(room);
+    updatePresence(room);
   } catch (err) {
     if (!online) return;
     online.fail = (online.fail || 0) + 1;
-    if (online.fail === 3) toast('网络有点慢，正在重试…');
+    if (online.fail >= 3) {
+      online.offline = true;
+      updatePresence(null);
+    } else if (online.fail === 2) {
+      toast('网络有点慢，正在重试…');
+    }
   } finally {
     if (online) online.pulling = false;
   }
@@ -1167,6 +1237,7 @@ function applyRemote(room) {
   if (!g || !online) return;
   if (g.busy) { online.pending = room; return; }
   online.version = room.version;
+  online.oppSeen = opponentSeen(room);
   if (!online.joined && room.guest_joined) {
     online.joined = true;
     hideWaiting();
@@ -1234,10 +1305,14 @@ function beginOnlineGame(room, color) {
     version: room.version,
     joined: !!room.guest_joined,
     timer: 0,
+    seenTimer: 0,
     pulling: false,
     localBusy: false,
     pending: null,
-    fail: 0
+    fail: 0,
+    offline: false,
+    presenceOff: false,
+    oppSeen: null
   };
   saveRoom(room.code, color);
   $('#setupView').classList.add('hidden');
@@ -1254,6 +1329,8 @@ function beginOnlineGame(room, color) {
   if (online.joined) hideWaiting();
   else showWaiting(online.code);
   startPolling();
+  startPresence();
+  updatePresence(room);
 }
 
 function resetOnlineGame() {
@@ -1407,6 +1484,19 @@ function bind() {
     beginGame();
   });
   $('#board').addEventListener('click', onBoardClick);
+  window.addEventListener('online', () => {
+    if (!online) return;
+    online.fail = 0;
+    online.offline = false;
+    updatePresence(null);
+    pullRoom();
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (!online || document.visibilityState !== 'visible') return;
+    online.fail = 0;
+    updatePresence(null);
+    pullRoom();
+  });
   $('#undoBtn').addEventListener('click', onUndo);
   $('#resignBtn').addEventListener('click', onResign);
   $('#restartBtn').addEventListener('click', onRestart);
@@ -1475,4 +1565,11 @@ if (inviteCode) {
   renderOpts();
   $('#roomInput').value = inviteCode.toUpperCase();
   joinByCode(inviteCode);
+}
+
+// 离线缓存：仅在 http(s) 下注册，file:// 打开时跳过
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).catch(() => { /* 注册失败不影响在线游玩 */ });
+  });
 }

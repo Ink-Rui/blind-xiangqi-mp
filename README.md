@@ -22,7 +22,8 @@
 - 今日一局：每天一副固定牌面，和 AI 交手，同一天所有人开局相同
 - 棋谱：对局中随时查看/复制着法记录，结束后可保存战绩图
 - 音效与震动可分别开关，偏好记在本地
-- 联机：一方建房把链接发给对手，双方实时同步；联机不提供悔棋，误吃己方将帅直接判负
+- 联机：一方建房把链接发给对手，双方实时同步；顶部显示对手在线状态，断网会自动重连；联机不提供悔棋，误吃己方将帅直接判负
+- 离线可用：首次打开后静态资源会缓存，断网仍能开新局；联机对局在断线时提示重连中
 
 ## 目录结构
 
@@ -33,8 +34,10 @@ docs/                 # 网页版（GitHub Pages 静态托管，无构建依赖�
   assets/style.css
   assets/app.js       # 交互与对局流程
   assets/engine.js    # 由 miniprogram/core/engine.ts 编译而来
+  assets/rules.js     # 终局判定（重复局面 / 无吃子 / 吃将），可单测
   assets/net.js       # 联机网络层（纯 fetch 调 Supabase PostgREST）
   assets/config.js    # Supabase 地址与 anon key（留空则联机不可用）
+  sw.js               # Service Worker：静态资源缓存与离线回落
   assets/icon-*.png   # 站点图标
   assets/og.png       # 分享预览图
 supabase/schema.sql   # 联机房间表 + RLS 策略
@@ -68,8 +71,10 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOi...';
 
 - `anon` key 是公开密钥，放在前端安全；权限由 `schema.sql` 里的 RLS 策略控制，同一时间只有拿到 6 位房间码的人能读写该房间。
 - 房间整局状态以 JSONB 存在 `rooms.state`，`version` 做乐观锁，双方同时写入时以服务端最新状态为准。
-- 前端能读到暗子的真实身份，属于「防作弊不严格」的设计，适合朋友间对弈。需要严格防作弊得把规则引擎搬到服务端。
-- 房间不会自动删除，可参考 `schema.sql` 末尾的 pg_cron 语句定期清理。
+- 「对手在线」状态依赖 `rooms.host_seen / guest_seen` 两列（每次心跳写入时间戳）。若之前已经建过表，请重新执行 [`supabase/schema.sql`](./supabase/schema.sql) 里的 `alter table ... add column if not exists` 语句；未迁移时功能自动隐藏，不影响对局。
+- 断线重连：轮询连续失败时顶部提示“连接中断，重连中…”，浏览器恢复网络或标签页切回前台会立即重新同步；房间被删除时弹出“房间已失效”并可返回设置。
+- 前端能读到暗子的真实身份，属于「防作弊不严格」的设计，适合朋友间对弈。需要严格防作弊得把规则引擎搬到服务端（需要匿名登录 + RPC/Edge Function，当前静态部署不提供）。
+- 房间不会自动删除，`schema.sql` 末尾附了 pg_cron 定时清理语句；也可在 SQL Editor 手动执行 `delete from public.rooms where updated_at < now() - interval '1 day';`。
 
 ## 本地运行网页版
 
@@ -94,19 +99,13 @@ npm run typecheck
 
 测试覆盖开局摆子与洗牌、暗子按所在格走法、马腿/炮架/兵过河等走子细节、将帅照面、牵制自杀着、将死判定与 AI 落子合法性。GitHub Actions 在每次 push 和 PR 时跑 `npm test` 与 `npm run typecheck`；站点本身仍由 GitHub Pages 从 `master` 分支自动构建，CI 不参与部署。
 
-## 微信小程序版
+## 微信小程序版（历史产物，不再维护）
 
-仓库里的 `miniprogram/` 是同一套规则引擎驱动的小程序实现，包含好友联机（微信云开发）。
+`miniprogram/` 与 `cloudfunctions/` 是最初的小程序实现，保留作参考，**不再更新、也不作为发布形态**。
 
-本地运行：
+原因：涉及棋牌对弈的小程序需要「游戏」类目，该类目要求企业主体与游戏版号；个人主体无法正式发布，只能停留在体验版。网页版不经过应用商店审核，打开即玩，因此项目只维护网页版。
 
-1. 用[微信开发者工具](https://developers.weixin.qq.com/miniprogram/dev/devtools/download.html)导入本目录
-2. 在 `project.config.json` 里把 `appid` 换成自己的小程序 AppID
-3. 开通云开发，把 `miniprogram/core/net.ts` 里的 `CLOUD_ENV` 换成你的云环境 ID
-4. 云开发控制台新建集合 `rooms`，权限选择「所有用户不可读写」
-5. 右键 `cloudfunctions/room` → 上传并部署
-
-注意：涉及棋牌对弈的小程序需要「游戏」类目，而该类目要求企业主体与游戏版号。个人主体无法正式发布，因此本项目以网页版为主要形态，小程序仅作体验版使用。
+如需重新启用小程序，注意它已经落后网页版：没有今日一局、棋谱、音效、战绩图，UI 也是旧版。
 
 ## License
 

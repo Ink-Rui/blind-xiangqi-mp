@@ -102,7 +102,7 @@
         <li><b>和棋</b><span>120 个半回合无吃子，或三次重复局面，判和。</span></li>
         <li><b>联机</b><span>选「联机对战」，一方建房后把链接或房间码发给对手，对方打开即可对局；联机不支持悔棋。</span></li>
       </ol>
-      <p class="fineprint">同一份规则引擎（<code>core/engine.ts</code>）同时驱动小程序与网页版，开源在 GitHub。</p>
+      <p class="fineprint">规则引擎开源在 GitHub；当前只维护网页版，小程序版本为历史产物。</p>
     </section>
   </main>
 
@@ -110,6 +110,7 @@
     <div class="game-head">
       <div class="gh-title">对局中<small>V1 核心玩法 · 暗子走完翻开</small></div>
       <div class="gh-actions">
+        <span id="presenceChip" class="pill hidden">对手在线</span>
         <span id="revealChip" class="pill dark hidden">翻开：—</span>
         <button type="button" id="soundBtn" class="pill">音效开</button>
         <button type="button" id="vibBtn" class="pill">震动开</button>
