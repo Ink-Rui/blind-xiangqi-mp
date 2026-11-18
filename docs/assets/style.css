@@ -549,6 +549,8 @@ a { color: var(--red); }
 }
 .end-card {
   width: 100%;
+  max-height: 100%;
+  overflow-y: auto;
   background: #f9f4ea;
   border-radius: 14px;
   padding: 16px;
@@ -846,6 +848,90 @@ a { color: var(--red); }
 .stats-recent li span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stats-recent li em { font-style: normal; font-size: 10.5px; }
 .stats-recent .stats-empty { color: var(--ink-soft); }
+
+/* 今日一局排行榜 */
+.rank-card {
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px dashed rgba(120, 95, 55, 0.28);
+}
+.rank-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.rank-head b {
+  font-size: 14px;
+  letter-spacing: 0.06em;
+  font-family: "Songti SC", "Noto Serif SC", "SimSun", serif;
+}
+.rank-head span { font-size: 11px; color: var(--ink-soft); }
+.rank-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.rank-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(120, 95, 55, 0.12);
+  background: rgba(255, 255, 255, 0.5);
+  font-size: 11.5px;
+}
+.rank-list li.me { border-color: rgba(179, 53, 43, 0.45); background: #fff8ec; }
+.rank-list .rk { flex: none; width: 15px; text-align: center; font-style: normal; font-weight: 800; color: #958a7a; }
+.rank-list li:nth-child(1) .rk { color: #b8860b; }
+.rank-list li:nth-child(2) .rk { color: #8c8c8c; }
+.rank-list li:nth-child(3) .rk { color: #a9713d; }
+.rank-list .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rank-list .res {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 5px;
+  background: #b7a98e;
+  color: #fff;
+  font-style: normal;
+  font-size: 10.5px;
+  font-weight: 800;
+}
+.rank-list .res.win { background: var(--red); }
+.rank-list .res.loss { background: #4a423a; }
+.rank-list .res.draw { background: #b7a98e; }
+.rank-list .mt { flex: none; font-size: 10.5px; color: var(--ink-soft); }
+.rank-list .rank-empty {
+  justify-content: center;
+  border-style: dashed;
+  background: none;
+  color: var(--ink-soft);
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 8px;
+  text-align: center;
+}
+.rank-foot { display: flex; gap: 6px; margin-top: 8px; align-items: center; }
+.rank-foot .mini-btn { flex: none; height: 34px; }
+#setupView .input.rank-name {
+  height: 34px;
+  font-size: 13.5px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.end-rank {
+  margin: 8px 0 2px;
+  padding-top: 7px;
+  border-top: 1px dashed rgba(120, 95, 55, 0.25);
+  text-align: left;
+}
+.end-rank-title {
+  margin: 0 0 4px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--ink-soft);
+  text-align: center;
+}
+.end-rank-note { margin: 4px 0 0; font-size: 10.5px; color: var(--ink-soft); text-align: center; }
+.end-rank .rank-list li { padding: 3px 7px; font-size: 11px; }
 
 /* 添加到主屏幕提示 */
 .install-tip {

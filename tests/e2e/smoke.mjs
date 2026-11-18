@@ -60,6 +60,12 @@ try {
     hasTouch: true
   });
   const page = await context.newPage();
+  // 排行榜在页面加载时就会拉取；E2E 不依赖外网，统一返回空榜
+  await context.route('**/rest/v1/**', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: '[]'
+  }));
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
@@ -77,6 +83,21 @@ try {
   check('手机首屏内可见开始按钮', first.bottom <= first.vh, first);
   check('无横向溢出', first.scrollW <= 390, first.scrollW);
   check('战绩卡片 5 项', first.cells === 5, first.cells);
+
+  // 1.1 陪练难度与今日榜
+  const extras = await page.evaluate(() => ({
+    levels: document.querySelectorAll('#optLevel .opt').length,
+    rankCard: !!document.querySelector('#rankCard'),
+    rankNote: document.querySelector('#rankNote').textContent
+  }));
+  check('陪练难度 5 档', extras.levels === 5, extras.levels);
+  check('今日榜卡片就绪', extras.rankCard, extras.rankCard);
+  const rankReady = await page.waitForFunction(
+    () => !document.querySelector('#rankList').textContent.includes('加载中'),
+    null, { timeout: 5000 }
+  ).then(() => true).catch(() => false);
+  const rankText = await page.locator('#rankList').textContent();
+  check('空榜有提示且无报错', rankReady && rankText.includes('还没有人上榜'), { rankReady, rankText });
 
   // 2. 开始 AI 对局
   await page.locator('#optPlay .opt', { hasText: 'AI 陪练' }).click();
@@ -157,6 +178,25 @@ try {
   await page.waitForSelector('#setupView:not(.hidden)');
   const nums = await page.locator('#statsNums .stat b').allTextContents();
   check('设置页展示战绩', nums[0] !== '0', nums);
+
+  // 9. 今日一局：终局面板展示排行榜并禁用悔棋
+  await page.locator('#dailyBtn').click();
+  await page.waitForSelector('#gameView:not(.hidden)');
+  await page.locator('#resignBtn').click();
+  await page.waitForSelector('#modal:not(.hidden)');
+  await page.locator('#modalOk').click();
+  await page.waitForSelector('#endRank:not(.hidden)');
+  await page.waitForFunction(
+    () => document.querySelector('#endRankNote').textContent.includes('今日榜'),
+    null, { timeout: 5000 }
+  ).catch(() => {});
+  const daily = await page.evaluate(() => ({
+    note: document.querySelector('#endRankNote').textContent,
+    undo: document.querySelector('#undoBtn').disabled,
+    mode: document.querySelector('#modeChip').textContent
+  }));
+  check('今日一局终局展示排行榜', daily.note.includes('今日榜') && daily.mode.includes('今日一局'), daily);
+  check('今日一局禁用悔棋', daily.undo === true, daily.undo);
 
   check('无 JS 异常', errors.length === 0, errors.slice(0, 3));
 } catch (e) {

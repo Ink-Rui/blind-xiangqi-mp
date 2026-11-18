@@ -21,7 +21,7 @@ export interface Slot { r: number; c: number; t: PieceType }
 export type ShuffleMode = 'A1' | 'A2' | 'B';
 export type RuleMode = 'check' | 'kill';
 export type PlayMode = 'hot' | 'ai' | 'online';
-export type Level = 'easy' | 'normal' | 'hard';
+export type Level = 'easy' | 'normal' | 'hard' | 'expert' | 'master';
 export interface Cfg { shuffle: ShuffleMode; rule: RuleMode; play: PlayMode; level: Level }
 export interface HistoryEntry { hash: string; checkBy: Side | null }
 export interface LastMove { from: Pos; to: Pos }
@@ -276,6 +276,29 @@ export function clonePieces(g: GameState): Piece[] {
 /** 子力估值（AI 评估用） */
 const AI_VALUE: Record<PieceType, number> = { K: 1000, R: 90, C: 45, N: 40, B: 20, A: 20, P: 10 };
 
+/** 陪练档位：从纯随机到预判应手，逐级增强 */
+export const AI_LEVELS: Level[] = ['easy', 'normal', 'hard', 'expert', 'master'];
+
+export interface AIProfile {
+  mode: 'random' | 'greedy' | 'score';
+  noise: number;
+  blunder: number;
+  capture: number;
+  breadth: number;
+}
+
+const AI_PROFILE: Record<Level, AIProfile> = {
+  easy: { mode: 'random', noise: 1.5, blunder: 0, capture: 0, breadth: 0 },
+  normal: { mode: 'greedy', noise: 1.5, blunder: 0, capture: 0.6, breadth: 0 },
+  hard: { mode: 'score', noise: 1.5, blunder: 0.04, capture: 0, breadth: 0 },
+  expert: { mode: 'score', noise: 0.8, blunder: 0.01, capture: 0, breadth: 10 },
+  master: { mode: 'score', noise: 0.25, blunder: 0, capture: 0, breadth: 16 }
+};
+
+export function aiProfile(level: Level | undefined): AIProfile {
+  return (level && AI_PROFILE[level]) || AI_PROFILE.hard;
+}
+
 /** side 一方（按操作权规则）能否吃掉 target */
 function isCapturable(g: PositionSnapshot, target: Piece, side: Side): boolean {
   if (!target.pos) return false;
@@ -318,11 +341,11 @@ function minAttackerValue(g: PositionSnapshot, target: Piece, side: Side, darkEV
 
 /** hard 难度单步评估（不偷看暗子身份，只用双方都可推算的信息做期望定价）：
  *  吃子价值 - 保护感知被吃风险 + 翻子归属/推进/将军小分 - 重复局面罚分 */
-function aiScore(g: GameState, m: { p: Piece; t: Pos }, side: Side): number {
+function aiScore(g: GameState, m: { p: Piece; t: Pos }, side: Side, noise = 1.5): number {
   const { p, t } = m;
   const from = p.pos!;
   const enemy = opp(side);
-  let s = Math.random() * 1.5;                 // 少量随机，避免走出死循环
+  let s = Math.random() * noise;                 // 少量随机，避免走出死循环
 
   // 可观测统计：存留暗子集合（明子身份公开、被吃子公告过，双方都能数出各方剩余暗子数）
   const H = g.pieces.filter(q => !q.captured && !q.revealed && q.pos);
@@ -391,7 +414,28 @@ function aiScore(g: GameState, m: { p: Piece; t: Pos }, side: Side): number {
   return s;
 }
 
-/** 陪练走子：easy 纯随机 / normal 60% 偏好吃子 / hard 期望定价单层评估（不偷看暗子身份） */
+/** 对手下一步能立刻吃到的最大子力（暗子按平均期望估），用于高难度预判 */
+function replyGain(g: PositionSnapshot, side: Side): number {
+  let best = 0;
+  for (const q of g.pieces) {
+    if (q.captured || !q.pos || !operable(g, q, side)) continue;
+    for (const t of pseudoMoves(g, q)) {
+      const tp = pieceAt(g, t);
+      if (!tp || !canCapture(g, q, tp)) continue;
+      const v = tp.revealed ? AI_VALUE[tp.type] : 10;
+      if (v > best) best = v;
+    }
+  }
+  return best;
+}
+
+function pickBest(scored: { m: { p: Piece; t: Pos }; s: number }[]): { p: Piece; t: Pos } {
+  const top = scored[0].s;
+  const tied = scored.filter(x => x.s > top - 0.01);
+  return tied[Math.floor(Math.random() * tied.length)].m;
+}
+
+/** 陪练走子：easy 纯随机 / normal 偏好吃子 / hard 单层评估 / expert·master 额外预判应手 */
 export function pickAIMove(g: GameState, side: Side = 'black'): { p: Piece; t: Pos } | null {
   const all: { p: Piece; t: Pos }[] = [];
   for (const q of g.pieces) {
@@ -399,22 +443,30 @@ export function pickAIMove(g: GameState, side: Side = 'black'): { p: Piece; t: P
     for (const t of legalTargets(g, q)) all.push({ p: q, t });
   }
   if (!all.length) return null;
-  const level: Level = g.cfg.level || 'normal';
-  if (level === 'easy') return all[Math.floor(Math.random() * all.length)];
-  if (level === 'normal') {
-    const caps = all.filter(m => pieceAt(g, m.t));
-    if (caps.length && Math.random() < 0.6) return caps[Math.floor(Math.random() * caps.length)];
-    return all[Math.floor(Math.random() * all.length)];
+  const profile = aiProfile(g.cfg.level);
+  const pick = (arr: { p: Piece; t: Pos }[]) => arr[Math.floor(Math.random() * arr.length)];
+  // 随机与失误只在「不误吃己方子」的着法里挑，保证低难度也不自残
+  const safe = all.filter(m => { const tp = pieceAt(g, m.t); return !tp || tp.color !== side; });
+  const pool = safe.length ? safe : all;
+  if (profile.mode === 'random') return pick(pool);
+  if (profile.mode === 'greedy') {
+    const caps = safe.filter(m => pieceAt(g, m.t));
+    if (caps.length && Math.random() < profile.capture) return pick(caps);
+    return pick(pool);
   }
-  // hard：可直吃对方明将先走；否则按单层期望评估选最优（并列随机）
+  if (profile.blunder && Math.random() < profile.blunder) return pick(pool);
+  // 可直吃对方明将先走
   const winNow = all.find(m => { const tp = pieceAt(g, m.t); return tp && tp.revealed && tp.type === 'K' && tp.color !== side; });
   if (winNow) return winNow;
-  let best: { p: Piece; t: Pos }[] = [];
-  let bestScore = -Infinity;
-  for (const m of all) {
-    const s = aiScore(g, m, side);
-    if (s > bestScore + 0.01) { bestScore = s; best = [m]; }
-    else if (s > bestScore - 0.01) best.push(m);
+  const enemy = opp(side);
+  const scored = all.map(m => ({ m, s: aiScore(g, m, side, profile.noise) }));
+  if (!profile.breadth) {
+    scored.sort((a, b) => b.s - a.s);
+    return pickBest(scored);
   }
-  return best[Math.floor(Math.random() * best.length)];
+  // 高难度：只对最有希望的候选做一层应手预判，避免对手下一步白吃大子
+  const top = scored.slice().sort((a, b) => b.s - a.s).slice(0, profile.breadth);
+  for (const it of top) it.s -= replyGain(simMove(g, it.m.p, it.m.t), enemy) * 0.9;
+  top.sort((a, b) => b.s - a.s);
+  return pickBest(top);
 }

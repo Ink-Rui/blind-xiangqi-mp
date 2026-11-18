@@ -4,7 +4,7 @@
 
 **在线对弈：[https://ink-rui.github.io/blind-xiangqi-mp/](https://ink-rui.github.io/blind-xiangqi-mp/)**
 
-浏览器直接打开就能玩，无需安装、无需登录。手机与桌面都适配，支持双人同屏、三档 AI 陪练和异地联机对战。
+浏览器直接打开就能玩，无需安装、无需登录。手机与桌面都适配，支持双人同屏、五档 AI 陪练和异地联机对战。
 
 ![对局界面](./docs/assets/screenshot-mobile.png)
 
@@ -19,7 +19,9 @@
 - 暗子谁都可以吃；误吃己方将帅按吃将判负，双人同屏可协商悔一步
 - 三种洗牌模式（A1 半盘内洗 / A2 跨河全混 / B 全盘混洗）、两种胜负规则（将军 / 吃将即胜）
 - 悔棋、认输、重开；120 半回合无吃子或三次重复局面判和
-- 今日一局：每天一副固定牌面，和 AI 交手，同一天所有人开局相同
+- 今日一局：每天一副固定牌面，和 AI 交手，同一天所有人开局相同；不提供悔棋，结束后自动计入今日排行榜
+- 今日排行榜：设置页与终局面板展示当天前 10 名，按胜/和/负、手数、用时排序；昵称保存在本地，同一设备当天只保留更好的一次
+- 五档 AI：入门（随机）、普通（偏好吃子）、困难（风险评估）、高手（预判应手）、大师（更宽预判、几乎不失误）
 - 本地战绩：AI 与联机对局自动记录胜负、胜率、连胜与最近 5 局，存在浏览器本地
 - 计时与回放：对局顶部显示整局用时；结束后可逐步回放本局，支持自动播放
 - 棋谱：对局中随时查看/复制着法记录，结束后可保存战绩图（含用时与累计战绩）
@@ -38,6 +40,7 @@ docs/                 # 网页版（GitHub Pages 静态托管，无构建依赖�
   assets/engine.js    # 由 miniprogram/core/engine.ts 编译而来
   assets/rules.js     # 终局判定（重复局面 / 无吃子 / 吃将），可单测
   assets/stats.js     # 本地战绩统计（纯函数，可单测）
+  assets/leaderboard.js  # 今日榜昵称、身份与排序口径（纯函数，可单测）
   assets/net.js       # 联机网络层（纯 fetch 调 Supabase PostgREST）
   assets/config.js    # Supabase 地址与 anon key（留空则联机不可用）
   robots.txt          # 搜索引擎抓取规则
@@ -78,6 +81,7 @@ export const SUPABASE_ANON_KEY = 'eyJhbGciOi...';
 - `anon` key 是公开密钥，放在前端安全；权限由 `schema.sql` 里的 RLS 策略控制，同一时间只有拿到 6 位房间码的人能读写该房间。
 - 房间整局状态以 JSONB 存在 `rooms.state`，`version` 做乐观锁，双方同时写入时以服务端最新状态为准。
 - 「对手在线」状态依赖 `rooms.host_seen / guest_seen` 两列（每次心跳写入时间戳）。若之前已经建过表，请重新执行 [`supabase/schema.sql`](./supabase/schema.sql) 里的 `alter table ... add column if not exists` 语句；未迁移时功能自动隐藏，不影响对局。
+- 今日排行榜依赖 `daily_scores` 表。已建过 `rooms` 的项目，请在 SQL Editor 重新执行一遍 [`supabase/schema.sql`](./supabase/schema.sql)，或单独执行文件末尾的 `daily_scores` 建表与 RLS 部分；未建表时排行榜显示提示，今日一局与本地战绩不受影响。
 - 断线重连：轮询连续失败时顶部提示“连接中断，重连中…”，浏览器恢复网络或标签页切回前台会立即重新同步；房间被删除时弹出“房间已失效”并可返回设置。
 - 连不上联机服务时会区分原因：提示“连不上联机服务”表示请求没有到达 Supabase（代理 / DNS / TLS 拦截），可换手机流量或关闭代理重试，并可用 `https://<项目>.supabase.co/rest/v1/rooms?select=code&limit=1` 验证（返回 `[]` 即通）；提示“联机配置无效 / 联机表未就绪”则检查 anon key、RLS 与表结构。
 - 顶部“连接中断”胶囊可点击查看联机诊断。若长期被网络拦截，可给 Supabase 绑定自定义域名，或按 `docs/assets/net.js` 暴露的 `createRoom / fetchRoom / pushState / touchRoom / markJoined` 五个方法替换成自建后端；页面层不依赖 Supabase SDK。
@@ -106,7 +110,7 @@ npm run build:engine  # 重新编译云函数引擎 cloudfunctions/room/engine.j
 npm run typecheck
 ```
 
-测试覆盖开局摆子与洗牌、暗子按所在格走法、马腿/炮架/兵过河等走子细节、将帅照面、牵制自杀着、将死判定与 AI 落子合法性，以及战绩累计、连胜与时长格式化。GitHub Actions 在每次 push 和 PR 时跑 `npm test`、`npm run typecheck` 与 `npm run e2e`；站点本身仍由 GitHub Pages 从 `master` 分支自动构建，CI 不参与部署。
+测试覆盖开局摆子与洗牌、暗子按所在格走法、马腿/炮架/兵过河等走子细节、将帅照面、牵制自杀着、将死判定与五档 AI 落子合法性，以及战绩累计、连胜、时长格式化、今日榜昵称清洗与排序口径。GitHub Actions 在每次 push 和 PR 时跑 `npm test`、`npm run typecheck` 与 `npm run e2e`；站点本身仍由 GitHub Pages 从 `master` 分支自动构建，CI 不参与部署。
 
 ## 微信小程序版（历史产物，不再维护）
 

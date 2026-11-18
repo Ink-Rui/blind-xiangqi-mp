@@ -114,6 +114,19 @@
         <div class="stats-nums" id="statsNums"></div>
         <ol class="stats-recent" id="statsRecent"></ol>
       </div>
+      <div class="rank-card" id="rankCard">
+        <div class="rank-head">
+          <b>今日一局 · 排行榜</b>
+          <span id="rankDay"></span>
+        </div>
+        <ol class="rank-list" id="rankList"><li class="rank-empty">加载中…</li></ol>
+        <div class="rank-foot">
+          <input id="rankName" class="input rank-name" maxlength="12" autocomplete="nickname" spellcheck="false" placeholder="你的昵称" aria-label="排行榜昵称" />
+          <button type="button" id="rankSave" class="mini-btn">保存昵称</button>
+          <button type="button" id="rankRefresh" class="mini-btn">刷新</button>
+        </div>
+        <p class="fineprint" id="rankNote">每天同一副牌，按胜/和/负、手数、用时排名。</p>
+      </div>
       <h2 class="panel-title">怎么玩</h2>
       <ol class="steps">
         <li><b>棋子暗置</b><span>开局除将帅外全部背面朝上，按所选模式随机摆放。</span></li>
@@ -187,6 +200,11 @@
             <h2 id="endTitle" class="end-title">红方胜</h2>
             <p id="endReason" class="end-reason"></p>
             <p id="endStats" class="end-stats"></p>
+            <div id="endRank" class="end-rank hidden">
+              <p class="end-rank-title">今日排行榜</p>
+              <ol id="endRankList" class="rank-list"></ol>
+              <p id="endRankNote" class="end-rank-note"></p>
+            </div>
             <div class="end-actions">
               <button type="button" id="againBtn" class="big">再来一局</button>
               <button type="button" id="shareBtn" class="big gray">保存战绩图</button>

@@ -6,10 +6,14 @@ import {
   newGameState, legalTargets, pieceAt, operable, halfOwner, inCheck, hasLegal,
   clonePieces, pickAIMove, opp, CHARS, NAMES, PIECE_XY
 } from './engine.js';
-import { ONLINE_READY, createRoom, fetchRoom, markJoined, pushState, touchRoom } from './net.js';
+import { ONLINE_READY, createRoom, fetchRoom, markJoined, pushState, touchRoom, fetchDailyTop, fetchDailyEntry, insertDailyScore, updateDailyScore } from './net.js';
 import { SUPABASE_URL } from './config.js';
 import { sideName, recordPosition, repetitionOutcome, noCaptureOutcome, kingCaptureOutcome } from './rules.js';
 import { emptyStats, applyResult, formatDuration, winRate, loadStats, saveStats } from './stats.js';
+import {
+  DEFAULT_NAME, loadName, saveName, loadClientId,
+  makeEntry, betterEntry, RESULT_LABEL
+} from './leaderboard.js';
 
 const $ = (s) => document.querySelector(s);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -30,16 +34,18 @@ const OPTS = {
     { v: 'online', name: '联机对战', desc: '建房或输入房间码，和朋友异地对弈' }
   ],
   level: [
-    { v: 'easy', name: '简单', desc: 'AI 随手乱走，适合熟悉规则' },
-    { v: 'normal', name: '普通', desc: 'AI 倾向吃子，但时常漏算' },
-    { v: 'hard', name: '困难', desc: 'AI 权衡吃子与风险，护将推进、不白送子' }
+    { v: 'easy', name: '入门', desc: '完全随机走子，适合第一次接触' },
+    { v: 'normal', name: '普通', desc: '偏好吃子，但经常漏算风险' },
+    { v: 'hard', name: '困难', desc: '权衡吃子与风险，护将推进' },
+    { v: 'expert', name: '高手', desc: '预判你的应手，少送子' },
+    { v: 'master', name: '大师', desc: '更宽的预判，几乎不失误' }
   ]
 };
 
 const SHUFFLE_NAME = { A1: 'A1 半盘内洗', A2: 'A2 跨河全混', B: 'B 全盘混洗' };
 const RULE_NAME = { check: '将军规则', kill: '吃将即胜' };
 const PLAY_NAME = { hot: '双人同屏', ai: 'AI 陪练', online: '联机对战' };
-const LEVEL_NAME = { easy: '简单', normal: '普通', hard: '困难' };
+const LEVEL_NAME = { easy: '入门', normal: '普通', hard: '困难', expert: '高手', master: '大师' };
 /** 暗子选中时显示的「位置型棋种」单字（与真实身份无关，仅提示该格走法） */
 const SLOT_CHAR = { K: '将', A: '士', B: '象', N: '马', R: '车', C: '炮', P: '兵' };
 
@@ -84,6 +90,9 @@ let elapsedFinal = 0;
 let statsRecorded = false;
 let stats = emptyStats();
 try { stats = loadStats(window.localStorage); } catch (e) { /* 隐私模式下退化为空战绩 */ }
+/** 今日一局排行榜：本局是否已提交、当前是否正在拉榜 */
+let dailySubmitted = false;
+let rankLoading = false;
 /** Android/Chrome 的安装事件 */
 let installPrompt = null;
 
@@ -349,7 +358,7 @@ function updateStatus() {
 
   $('#moveChip').textContent = '第 ' + g.moveNum + ' 手';
   $('#noCapChip').textContent = '无吃子 ' + g.noCap + '/120';
-  $('#undoBtn').disabled = !!g.over || isOnline();
+  $('#undoBtn').disabled = !!g.over || isOnline() || !!cfg.daily;
   $('#resignBtn').disabled = !!g.over;
   renderCfgList();
   renderTrays();
@@ -671,7 +680,13 @@ function mulberry32(a) {
 
 function todayKey() {
   const d = new Date();
-  return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+  const two = (n) => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + two(d.getMonth() + 1) + '-' + two(d.getDate());
+}
+
+function dayLabel(key) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(key || '');
+  return m ? Number(m[2]) + ' 月 ' + Number(m[3]) + ' 日' : '';
 }
 
 function beginGame() {
@@ -684,6 +699,7 @@ function beginGame() {
   moveLog = [];
   selectedId = null;
   statsRecorded = false;
+  dailySubmitted = false;
   hideEnd();
   hideWaiting();
   closeModal();
@@ -757,6 +773,7 @@ function toSetup() {
   $('#setupView').classList.remove('hidden');
   setHeader('setup');
   renderOpts();
+  refreshDailyRank();
 }
 
 function scheduleAI() {
@@ -1027,6 +1044,8 @@ function renderEnd() {
   titleEl.className = 'end-title' + (winner ? (winner === 'red' ? '' : ' black') : ' draw');
   $('#endReason').textContent = g.reason || '';
   $('#endOverlay').classList.remove('hidden');
+  if (cfg.daily) openDailyRankPanel();
+  else $('#endRank').classList.add('hidden');
 }
 
 function endStatsText() {
@@ -1225,6 +1244,7 @@ function showMoveLog() {
 
 function onUndo() {
   if (!g || g.over || g.busy) return;
+  if (cfg.daily) { toast('今日一局不提供悔棋'); return; }
   if (isOnline()) { toast('联机对局暂不支持悔棋'); return; }
   if (!snaps.length) { toast('没有可悔的着法'); return; }
 
@@ -1298,6 +1318,137 @@ function onRestart() {
       else beginGame();
     }
   });
+}
+
+/* ---------------- 今日一局排行榜 ---------------- */
+
+const RANK_LIMIT = 10;
+const RANK_END_LIMIT = 5;
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
+function rankErrorNote(err) {
+  const raw = (err && err.message) || '';
+  if (!ONLINE_READY) return '排行榜未配置：在 assets/config.js 填入 Supabase 地址与 anon key 后可用。';
+  if (/PGRST205|does not exist|relation|schema cache/i.test(raw)) {
+    return '排行榜数据表未创建：请在 Supabase SQL Editor 执行 supabase/schema.sql 后刷新。';
+  }
+  if (/Failed to fetch|Load failed|NetworkError|fetch failed|timed out|net::ERR/i.test(raw)) {
+    return '排行榜暂时连不上，成绩已保存在本地，可稍后点刷新重试。';
+  }
+  return '排行榜暂时不可用：' + (raw || '未知错误');
+}
+
+function rankRowsHtml(rows, limit, myId) {
+  return rows.slice(0, limit).map((row, i) => {
+    const res = RESULT_LABEL[row.result] || '—';
+    return '<li' + (row.client_id === myId ? ' class="me"' : '') + '>'
+      + '<i class="rk">' + (i + 1) + '</i>'
+      + '<span class="nm">' + esc(row.name || DEFAULT_NAME) + '</span>'
+      + '<i class="res ' + esc(row.result) + '">' + res + '</i>'
+      + '<span class="mt">' + (row.moves || 0) + ' 手 · ' + formatDuration(row.ms) + '</span>'
+      + '</li>';
+  }).join('');
+}
+
+function paintRank(err, rows) {
+  const myId = loadClientId(window.localStorage);
+  const setupList = $('#rankList');
+  const endList = $('#endRankList');
+  const note = $('#rankNote');
+  if (err) {
+    const msg = rankErrorNote(err);
+    if (setupList) setupList.innerHTML = '<li class="rank-empty">' + esc(msg) + '</li>';
+    if (endList) endList.innerHTML = '<li class="rank-empty">' + esc(msg) + '</li>';
+    if (note) note.textContent = msg;
+    return;
+  }
+  const list = rows || [];
+  const empty = '<li class="rank-empty">今天还没有人上榜，来抢第一。</li>';
+  if (setupList) setupList.innerHTML = list.length ? rankRowsHtml(list, RANK_LIMIT, myId) : empty;
+  if (endList) endList.innerHTML = list.length ? rankRowsHtml(list, RANK_END_LIMIT, myId) : empty;
+  if (note) {
+    note.textContent = list.length
+      ? '按胜/和/负、手数、用时排序 · 共 ' + list.length + ' 人'
+      : '每天同一副牌，按胜/和/负、手数、用时排名。';
+  }
+}
+
+async function refreshDailyRank() {
+  if (rankLoading) return;
+  if (!ONLINE_READY) { paintRank(new Error('unconfigured')); return; }
+  rankLoading = true;
+  try {
+    paintRank(null, await fetchDailyTop(todayKey(), RANK_LIMIT));
+  } catch (err) {
+    paintRank(err);
+  } finally {
+    rankLoading = false;
+  }
+}
+
+/** 今日一局结束：提交本局成绩（同一天只保留更好的一次），失败不阻塞对局 */
+async function submitDailyResult() {
+  if (dailySubmitted || !cfg.daily || !g || !g.over) return;
+  dailySubmitted = true;
+  const result = !g.winner ? 'draw' : g.winner === 'red' ? 'win' : 'loss';
+  const entry = makeEntry(result, moveLog.length || Math.max(0, g.moveNum - 1), elapsedMs());
+  const day = cfg.daily;
+  const note = $('#endRankNote');
+  if (!ONLINE_READY) {
+    if (note) note.textContent = '排行榜未配置，本局成绩只保存在本地。';
+    return;
+  }
+  const id = loadClientId(window.localStorage);
+  const name = loadName(window.localStorage);
+  if (note) note.textContent = '正在提交成绩…';
+  try {
+    const mine = await fetchDailyEntry(day, id);
+    if (!mine) {
+      await insertDailyScore({ day, client_id: id, name, ...entry });
+    } else {
+      const better = betterEntry(entry, mine);
+      const patch = better ? { name, ...entry } : (name !== mine.name ? { name } : null);
+      if (patch) await updateDailyScore(mine.id, patch);
+    }
+    if (note) note.textContent = '成绩已计入今日榜（昵称可在设置页修改）';
+  } catch (err) {
+    if (note) note.textContent = rankErrorNote(err);
+  }
+}
+
+function openDailyRankPanel() {
+  const box = $('#endRank');
+  if (!box) return;
+  box.classList.remove('hidden');
+  const list = $('#endRankList');
+  if (list) list.innerHTML = '<li class="rank-empty">加载中…</li>';
+  submitDailyResult().then(refreshDailyRank, refreshDailyRank);
+}
+
+function initRankCard() {
+  const input = $('#rankName');
+  if (!input) return;
+  input.value = loadName(window.localStorage);
+  $('#rankDay').textContent = dayLabel(todayKey());
+  const save = () => {
+    const name = saveName(window.localStorage, input.value);
+    input.value = name;
+    toast('昵称已保存：' + name);
+  };
+  $('#rankSave').addEventListener('click', save);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); save(); }
+  });
+  $('#rankRefresh').addEventListener('click', () => {
+    if (!ONLINE_READY) { toast('排行榜未配置'); return; }
+    refreshDailyRank();
+  });
+  refreshDailyRank();
 }
 
 /* ---------------- 联机 ---------------- */
@@ -1903,6 +2054,7 @@ function bind() {
 buildGrid();
 renderOpts();
 renderStats();
+initRankCard();
 setupInstallTip();
 syncVibBtn();
 syncSoundBtn();

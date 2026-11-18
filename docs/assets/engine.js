@@ -266,6 +266,18 @@ export function clonePieces(g) {
     return g.pieces.map(q => ({ ...q, pos: q.pos ? { ...q.pos } : null }));
 }
 const AI_VALUE = { K: 1000, R: 90, C: 45, N: 40, B: 20, A: 20, P: 10 };
+/** 陪练档位：从纯随机到预判应手，逐级增强 */
+export const AI_LEVELS = ['easy', 'normal', 'hard', 'expert', 'master'];
+const AI_PROFILE = {
+    easy: { mode: 'random', noise: 1.5, blunder: 0, capture: 0, breadth: 0 },
+    normal: { mode: 'greedy', noise: 1.5, blunder: 0, capture: 0.6, breadth: 0 },
+    hard: { mode: 'score', noise: 1.5, blunder: 0.04, capture: 0, breadth: 0 },
+    expert: { mode: 'score', noise: 0.8, blunder: 0.01, capture: 0, breadth: 10 },
+    master: { mode: 'score', noise: 0.25, blunder: 0, capture: 0, breadth: 16 }
+};
+export function aiProfile(level) {
+    return (level && AI_PROFILE[level]) || AI_PROFILE.hard;
+}
 function isCapturable(g, target, side) {
     if (!target.pos)
         return false;
@@ -315,11 +327,11 @@ function minAttackerValue(g, target, side, darkEV) {
         mn = Math.min(mn, darkEV);
     return mn;
 }
-function aiScore(g, m, side) {
+function aiScore(g, m, side, noise = 1.5) {
     const { p, t } = m;
     const from = p.pos;
     const enemy = opp(side);
-    let s = Math.random() * 1.5;
+    let s = Math.random() * noise;
     const H = g.pieces.filter(q => !q.captured && !q.revealed && q.pos);
     const N = H.length || 1;
     const myHArr = H.filter(q => q.color === side);
@@ -389,6 +401,28 @@ function aiScore(g, m, side) {
         s -= 300;
     return s;
 }
+/** 对手下一步能立刻吃到的最大子力（暗子按平均期望估），用于高难度预判 */
+function replyGain(g, side) {
+    let best = 0;
+    for (const q of g.pieces) {
+        if (q.captured || !q.pos || !operable(g, q, side))
+            continue;
+        for (const t of pseudoMoves(g, q)) {
+            const tp = pieceAt(g, t);
+            if (!tp || !canCapture(g, q, tp))
+                continue;
+            const v = tp.revealed ? AI_VALUE[tp.type] : 10;
+            if (v > best)
+                best = v;
+        }
+    }
+    return best;
+}
+function pickBest(scored) {
+    const top = scored[0].s;
+    const tied = scored.filter(x => x.s > top - 0.01);
+    return tied[Math.floor(Math.random() * tied.length)].m;
+}
 export function pickAIMove(g, side = 'black') {
     const all = [];
     for (const q of g.pieces) {
@@ -399,28 +433,34 @@ export function pickAIMove(g, side = 'black') {
     }
     if (!all.length)
         return null;
-    const level = g.cfg.level || 'normal';
-    if (level === 'easy')
-        return all[Math.floor(Math.random() * all.length)];
-    if (level === 'normal') {
-        const caps = all.filter(m => pieceAt(g, m.t));
-        if (caps.length && Math.random() < 0.6)
-            return caps[Math.floor(Math.random() * caps.length)];
-        return all[Math.floor(Math.random() * all.length)];
+    const profile = aiProfile(g.cfg.level);
+    const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+    // 随机与失误只在「不误吃己方子」的着法里挑，保证低难度也不自残
+    const safe = all.filter(m => { const tp = pieceAt(g, m.t); return !tp || tp.color !== side; });
+    const pool = safe.length ? safe : all;
+    if (profile.mode === 'random')
+        return pick(pool);
+    if (profile.mode === 'greedy') {
+        const caps = safe.filter(m => pieceAt(g, m.t));
+        if (caps.length && Math.random() < profile.capture)
+            return pick(caps);
+        return pick(pool);
     }
+    if (profile.blunder && Math.random() < profile.blunder)
+        return pick(pool);
     const winNow = all.find(m => { const tp = pieceAt(g, m.t); return tp && tp.revealed && tp.type === 'K' && tp.color !== side; });
     if (winNow)
         return winNow;
-    let best = [];
-    let bestScore = -Infinity;
-    for (const m of all) {
-        const s = aiScore(g, m, side);
-        if (s > bestScore + 0.01) {
-            bestScore = s;
-            best = [m];
-        }
-        else if (s > bestScore - 0.01)
-            best.push(m);
+    const enemy = opp(side);
+    const scored = all.map(m => ({ m, s: aiScore(g, m, side, profile.noise) }));
+    if (!profile.breadth) {
+        scored.sort((a, b) => b.s - a.s);
+        return pickBest(scored);
     }
-    return best[Math.floor(Math.random() * best.length)];
+    // 高难度：只对最有希望的候选做一层应手预判，避免对手下一步白吃大子
+    const top = scored.slice().sort((a, b) => b.s - a.s).slice(0, profile.breadth);
+    for (const it of top)
+        it.s -= replyGain(simMove(g, it.m.p, it.m.t), enemy) * 0.9;
+    top.sort((a, b) => b.s - a.s);
+    return pickBest(top);
 }

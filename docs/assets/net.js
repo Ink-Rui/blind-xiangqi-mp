@@ -7,6 +7,7 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
 export const ONLINE_READY = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 
 const BASE = String(SUPABASE_URL || '').replace(/\/+$/, '') + '/rest/v1/rooms';
+const DAILY = String(SUPABASE_URL || '').replace(/\/+$/, '') + '/rest/v1/daily_scores';
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 去掉 I O 0 1，避免看错
 
 function headers(extra) {
@@ -100,6 +101,51 @@ export async function touchRoom(code, color) {
       method: 'PATCH',
       headers: headers({ Prefer: 'return=representation' }),
       body: JSON.stringify({ [column]: new Date().toISOString() })
+    }
+  );
+  return rows && rows[0] ? rows[0] : null;
+}
+
+/* ---------------- 每日一局排行榜 ---------------- */
+
+/** 今日榜前 N 名；服务端只按 rank_score 倒序 */
+export async function fetchDailyTop(day, limit = 10) {
+  return request(
+    DAILY + '?day=eq.' + encodeURIComponent(day)
+      + '&select=id,client_id,name,score,result,moves,ms,rank_score,created_at'
+      + '&order=rank_score.desc,created_at.asc'
+      + '&limit=' + Math.max(1, Math.min(50, limit)),
+    { headers: headers() }
+  );
+}
+
+/** 自己当天是否已有成绩（一次开一局，只保留更好的一次） */
+export async function fetchDailyEntry(day, clientId) {
+  const rows = await request(
+    DAILY + '?day=eq.' + encodeURIComponent(day)
+      + '&client_id=eq.' + encodeURIComponent(clientId)
+      + '&select=id,client_id,name,score,result,moves,ms,rank_score&limit=1',
+    { headers: headers() }
+  );
+  return rows && rows[0] ? rows[0] : null;
+}
+
+export async function insertDailyScore(row) {
+  const rows = await request(DAILY + '?select=id', {
+    method: 'POST',
+    headers: headers({ Prefer: 'return=representation' }),
+    body: JSON.stringify(row)
+  });
+  return rows && rows[0] ? rows[0] : null;
+}
+
+export async function updateDailyScore(id, patch) {
+  const rows = await request(
+    DAILY + '?id=eq.' + encodeURIComponent(id) + '&select=id',
+    {
+      method: 'PATCH',
+      headers: headers({ Prefer: 'return=representation' }),
+      body: JSON.stringify(patch)
     }
   );
   return rows && rows[0] ? rows[0] : null;

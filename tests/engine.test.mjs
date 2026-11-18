@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  newGameState, effType, pseudoMoves, legalTargets, inCheck, hasLegal, operable, pieceAt, pickAIMove
+  newGameState, effType, pseudoMoves, legalTargets, inCheck, hasLegal, operable, pieceAt, pickAIMove,
+  AI_LEVELS, aiProfile
 } from '../docs/assets/engine.js';
 
 const CFG = { shuffle: 'A1', rule: 'check', level: 'normal' };
@@ -151,4 +152,34 @@ test('AI 返回的着法必然合法', () => {
   assert.ok(legalTargets(g, move.p).some((t) => t.r === move.t.r && t.c === move.t.c));
   assert.ok(operable(g, move.p, 'black'));
   assert.ok(pieceAt(g, move.t) === undefined || pieceAt(g, move.t).color === 'red');
+});
+
+test('五档陪练都能给出合法着法', () => {
+  assert.deepEqual(AI_LEVELS, ['easy', 'normal', 'hard', 'expert', 'master']);
+  for (const level of AI_LEVELS) {
+    const g = newGameState({ ...CFG, shuffle: 'A2', level });
+    g.turn = 'black';
+    const move = pickAIMove(g, 'black');
+    assert.ok(move, level + ' 应能给出着法');
+    assert.ok(legalTargets(g, move.p).some((t) => t.r === move.t.r && t.c === move.t.c), level + ' 着法应合法');
+    assert.ok(operable(g, move.p, 'black'), level + ' 应操作己方棋子');
+  }
+});
+
+test('难度逐级增强：失误率不升、预判候选不降', () => {
+  assert.equal(aiProfile('easy').mode, 'random');
+  assert.equal(aiProfile('normal').mode, 'greedy');
+  let prevBlunder = Infinity;
+  let prevNoise = Infinity;
+  let prevBreadth = -1;
+  for (const level of ['hard', 'expert', 'master']) {
+    const p = aiProfile(level);
+    assert.ok(p.blunder <= prevBlunder, level + ' 失误率不应高于上一档');
+    assert.ok(p.noise <= prevNoise, level + ' 随机扰动不应高于上一档');
+    assert.ok(p.breadth >= prevBreadth, level + ' 预判候选不应少于上一档');
+    prevBlunder = p.blunder;
+    prevNoise = p.noise;
+    prevBreadth = p.breadth;
+  }
+  assert.equal(aiProfile('unknown').mode, 'score', '未知档位按困难处理');
 });

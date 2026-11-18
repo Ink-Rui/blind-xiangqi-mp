@@ -3,7 +3,7 @@
  * 静态资源 cache-first；页面与配置 network-first，保证更新能及时生效。
  * 修改缓存清单或策略时请同步提升 VERSION。
  */
-const VERSION = 'blind-xiangqi-v3';
+const VERSION = 'blind-xiangqi-v4';
 const ASSETS = [
   './index.html',
   './assets/style.css',
@@ -12,6 +12,7 @@ const ASSETS = [
   './assets/net.js',
   './assets/rules.js',
   './assets/stats.js',
+  './assets/leaderboard.js',
   './manifest.webmanifest',
   './assets/icon-192.png',
   './assets/icon-512.png',
