@@ -7,7 +7,9 @@ import {
   clonePieces, pickAIMove, opp, CHARS, NAMES, PIECE_XY
 } from './engine.js';
 import { ONLINE_READY, createRoom, fetchRoom, markJoined, pushState, touchRoom } from './net.js';
+import { SUPABASE_URL } from './config.js';
 import { sideName, recordPosition, repetitionOutcome, noCaptureOutcome, kingCaptureOutcome } from './rules.js';
+import { emptyStats, applyResult, formatDuration, winRate, loadStats, saveStats } from './stats.js';
 
 const $ = (s) => document.querySelector(s);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -70,6 +72,20 @@ try { vibOn = localStorage.getItem('blind-xiangqi-vib') !== 'off'; } catch (e) {
 let modalFns = { ok: null, cancel: null };
 /** 联机会话：{ code, color, version, joined, timer, pulling, localBusy, pending, fail } */
 let online = null;
+/** 回放帧：每一次有效走子后记录一份轻量棋盘快照 */
+let frames = [];
+/** 回放状态：{ idx, timer, saved, savedSel } */
+let review = null;
+/** 计时与本地战绩 */
+let gameStart = 0;
+let lastMoveAt = 0;
+let clockTimer = 0;
+let elapsedFinal = 0;
+let statsRecorded = false;
+let stats = emptyStats();
+try { stats = loadStats(window.localStorage); } catch (e) { /* 隐私模式下退化为空战绩 */ }
+/** Android/Chrome 的安装事件 */
+let installPrompt = null;
 
 /* ---------------- 设置 ---------------- */
 
@@ -394,6 +410,213 @@ function closeModal() {
   modalFns = { ok: null, cancel: null };
 }
 
+/* ---------------- 计时 / 战绩 / 回放 ---------------- */
+
+function startClock() {
+  stopClock();
+  gameStart = Date.now();
+  lastMoveAt = gameStart;
+  elapsedFinal = 0;
+  syncClock();
+  clockTimer = setInterval(syncClock, 1000);
+}
+
+function stopClock() {
+  if (clockTimer) {
+    clearInterval(clockTimer);
+    clockTimer = 0;
+  }
+}
+
+function elapsedMs() {
+  if (elapsedFinal) return elapsedFinal;
+  return gameStart ? Date.now() - gameStart : 0;
+}
+
+function syncClock() {
+  const el = $('#timeChip');
+  if (!el) return;
+  el.textContent = '用时 ' + formatDuration(elapsedMs());
+}
+
+/** 计入战绩的一方；双人同屏不区分个人胜负 */
+function humanSide() {
+  if (cfg.play === 'ai') return 'red';
+  if (isOnline() && online) return online.color;
+  return null;
+}
+
+function recordResult() {
+  if (!g || !g.over || statsRecorded) return;
+  const mine = humanSide();
+  if (!mine) return;
+  statsRecorded = true;
+  const result = !g.winner ? 'draw' : (g.winner === mine ? 'win' : 'loss');
+  stats = applyResult(stats, {
+    at: Date.now(),
+    mode: cfg.play,
+    result,
+    moves: moveLog.length,
+    ms: elapsedMs()
+  });
+  saveStats(window.localStorage, stats);
+  renderStats();
+}
+
+function renderStats() {
+  const nums = $('#statsNums');
+  if (!nums) return;
+  const s = stats;
+  $('#statsSub').textContent = s.games
+    ? '胜率 ' + winRate(s) + '% · 最高连胜 ' + s.best
+    : 'AI 与联机对局计入';
+  const cells = [['局数', s.games], ['胜', s.wins], ['负', s.losses], ['和', s.draws], ['连胜', s.streak]];
+  nums.innerHTML = cells.map(([k, v]) => '<div class="stat"><b>' + v + '</b><span>' + k + '</span></div>').join('');
+  const recent = $('#statsRecent');
+  if (!s.recent.length) {
+    recent.innerHTML = '<li class="stats-empty">还没有完成的对局</li>';
+    return;
+  }
+  const modeName = { ai: 'AI', online: '联机' };
+  const word = { win: '胜', loss: '负', draw: '和' };
+  recent.innerHTML = s.recent.map((r) => {
+    const d = new Date(r.at || 0);
+    const day = (d.getMonth() + 1) + '/' + d.getDate();
+    return '<li><i class="res ' + r.result + '">' + word[r.result] + '</i>'
+      + '<span>' + modeName[r.mode] + ' · ' + r.moves + ' 手 · ' + formatDuration(r.ms) + '</span>'
+      + '<em>' + day + '</em></li>';
+  }).join('');
+}
+
+function coordText(pos) {
+  return '(' + (pos.c + 1) + ',' + (pos.r + 1) + ')';
+}
+
+/** 当前局面 → 回放帧（只保留渲染所需字段） */
+function frameNow(label) {
+  return {
+    label: label || '',
+    turn: g.turn,
+    moveNum: g.moveNum,
+    noCap: g.noCap,
+    pieces: g.pieces.map((p) => ({
+      id: p.id,
+      color: p.color,
+      type: p.type,
+      slotType: p.slotType,
+      revealed: !!p.revealed,
+      captured: !!p.captured,
+      pos: p.pos ? { r: p.pos.r, c: p.pos.c } : null
+    })),
+    lastMove: g.lastMove ? { from: { ...g.lastMove.from }, to: { ...g.lastMove.to } } : null
+  };
+}
+
+function resetFrames() {
+  frames = g ? [frameNow('开局')] : [];
+}
+
+/** 走子完成后追加一帧，label 即棋谱里的一行 */
+function pushMoveFrame() {
+  const m = moveLog[moveLog.length - 1];
+  let label = '开局';
+  if (m) {
+    label = '第 ' + m.no + ' 手 · ' + sideName(m.side) + ' ' + m.piece + ' '
+      + coordText(m.from) + '→' + coordText(m.to)
+      + (m.capture ? ' 吃' + m.capture : '')
+      + (m.ms ? ' · ' + (m.ms / 1000).toFixed(1) + 's' : '');
+  }
+  frames.push(frameNow(label));
+}
+
+function startReview() {
+  if (!g) return;
+  if (isOnline()) { toast('联机对局的回放暂未开放'); return; }
+  if (frames.length < 2) { toast('还没有可回放的着法'); return; }
+  if (review) return;
+  stopClock();
+  review = { idx: 0, timer: 0, saved: g, savedSel: selectedId };
+  hideEnd();
+  $('#replayBar').classList.remove('hidden');
+  showFrame(0);
+}
+
+function showFrame(i) {
+  if (!review || !frames.length) return;
+  const idx = Math.max(0, Math.min(frames.length - 1, i));
+  review.idx = idx;
+  const f = frames[idx];
+  const pseudo = {
+    pieces: f.pieces.map((p) => ({ ...p, pos: p.pos ? { ...p.pos } : null })),
+    turn: f.turn,
+    moveNum: f.moveNum,
+    noCap: f.noCap,
+    lastMove: f.lastMove ? { from: { ...f.lastMove.from }, to: { ...f.lastMove.to } } : null,
+    history: [],
+    repMap: {},
+    cfg: { ...cfg },
+    over: true,
+    winner: null,
+    selected: null,
+    busy: true
+  };
+  g = pseudo;
+  selectedId = null;
+  rebuildPieces();
+  markLayer.innerHTML = '';
+  hintLayer.innerHTML = '';
+  syncPieces();
+  renderHints();
+  $('#revLabel').textContent = idx + '/' + (frames.length - 1) + ' · ' + (f.label || '开局');
+  $('#revPrev').disabled = idx === 0;
+  $('#revNext').disabled = idx >= frames.length - 1;
+  $('#revPlay').textContent = review.timer ? '暂停' : '播放';
+}
+
+function stopReplay() {
+  if (review && review.timer) {
+    clearInterval(review.timer);
+    review.timer = 0;
+  }
+}
+
+function toggleReplay() {
+  if (!review) return;
+  if (review.timer) {
+    stopReplay();
+    showFrame(review.idx);
+    return;
+  }
+  if (review.idx >= frames.length - 1) showFrame(0);
+  review.timer = setInterval(() => {
+    if (!review) return;
+    if (review.idx >= frames.length - 1) {
+      stopReplay();
+      showFrame(review.idx);
+      return;
+    }
+    showFrame(review.idx + 1);
+  }, 700);
+  showFrame(review.idx);
+}
+
+function exitReview() {
+  if (!review) return;
+  stopReplay();
+  const saved = review.saved;
+  review = null;
+  g = saved;
+  selectedId = null;
+  $('#replayBar').classList.add('hidden');
+  rebuildPieces();
+  markLayer.innerHTML = '';
+  hintLayer.innerHTML = '';
+  syncPieces();
+  renderHints();
+  updateStatus();
+  if (g && g.over) $('#endOverlay').classList.remove('hidden');
+}
+
 /* ---------------- 对局流程 ---------------- */
 
 function setHeader(mode) {
@@ -453,16 +676,20 @@ function todayKey() {
 
 function beginGame() {
   leaveOnline();
+  if (review) exitReview();
   epoch++;
   clearTimeout(aiTimer);
   aiThinking = false;
   snaps = [];
   moveLog = [];
   selectedId = null;
+  statsRecorded = false;
   hideEnd();
   hideWaiting();
   closeModal();
   g = cfg.daily ? newDailyGame(cfg) : newGameState(cfg);
+  resetFrames();
+  startClock();
   $('#setupView').classList.add('hidden');
   $('#gameView').classList.remove('hidden');
   setHeader('game');
@@ -508,13 +735,17 @@ function paintTray(sel, chars, color) {
 }
 
 function toSetup() {
+  if (review) exitReview();
   leaveOnline();
   epoch++;
   clearTimeout(aiTimer);
   aiThinking = false;
+  stopClock();
   g = null;
   snaps = [];
   moveLog = [];
+  frames = [];
+  statsRecorded = false;
   delete sel.daily;
   delete cfg.daily;
   selectedId = null;
@@ -554,6 +785,7 @@ async function playMove(p, t) {
 
   const wasDark = !p.revealed;
   const moverSide = p.revealed ? p.color : halfOwner(p.pos);
+  const thinkMs = lastMoveAt ? Date.now() - lastMoveAt : 0;
   const target = pieceAt(g, t);
   if (target) sfx('capture');
   else if (wasDark) sfx('reveal');
@@ -590,7 +822,8 @@ async function playMove(p, t) {
     to: { r: t.r, c: t.c },
     capture: target ? CHARS[target.color][target.type] : '',
     reveal: wasDark,
-    check: false
+    check: false,
+    ms: thinkMs
   });
 
   syncPieces();
@@ -653,6 +886,9 @@ function finishMove(p, target, moverSide) {
     return;
   }
 
+  pushMoveFrame();
+  lastMoveAt = Date.now();
+
   const { hash, gaveCheck } = recordPosition(g, moverSide);
   if (moveLog.length) moveLog[moveLog.length - 1].check = !!gaveCheck;
 
@@ -705,6 +941,7 @@ function revertOne() {
   if (!snap) return false;
   if (g.history.length) g.history.pop();
   if (moveLog.length) moveLog.pop();
+  if (frames.length > 1) frames.pop();
   restoreSnap(snap, [snap.flippedId].filter(Boolean));
   return true;
 }
@@ -749,6 +986,7 @@ function endGame(winner, reason) {
   epoch++;
   clearTimeout(aiTimer);
   aiThinking = false;
+  stopClock();
   g.over = true;
   g.winner = winner;
   g.reason = reason;
@@ -756,6 +994,7 @@ function endGame(winner, reason) {
   g.selected = null;
   selectedId = null;
   for (const p of g.pieces) p.revealed = true;
+  if (frames.length) frames.push(frameNow('终局 · ' + (winner ? sideName(winner) + '胜' : '和棋')));
   syncPieces();
   renderHints();
   updateStatus();
@@ -772,6 +1011,11 @@ function resultTitle() {
 
 function renderEnd() {
   if (!g) return;
+  if (!elapsedFinal) elapsedFinal = elapsedMs();
+  recordResult();
+  stopClock();
+  syncClock();
+  $('#endStats').textContent = endStatsText();
   const winner = g.winner;
   const mine = cfg.play === 'ai' ? 'red' : (isOnline() ? online.color : null);
   if (!winner) sfx('draw');
@@ -783,6 +1027,13 @@ function renderEnd() {
   titleEl.className = 'end-title' + (winner ? (winner === 'red' ? '' : ' black') : ' draw');
   $('#endReason').textContent = g.reason || '';
   $('#endOverlay').classList.remove('hidden');
+}
+
+function endStatsText() {
+  const parts = ['本局用时 ' + formatDuration(elapsedMs())];
+  if (moveLog.length) parts.push(moveLog.length + ' 手');
+  if (humanSide()) parts.push('累计 ' + stats.wins + ' 胜 ' + stats.losses + ' 负 ' + stats.draws + ' 和');
+  return parts.join(' · ');
 }
 
 function hideEnd() {
@@ -881,12 +1132,15 @@ function saveShareCard() {
     ['洗牌模式', SHUFFLE_NAME[cfg.shuffle]],
     ['胜负规则', RULE_NAME[cfg.rule]],
     ['对局形式', playText],
-    ['总手数', g.moveNum + ' 手'],
+    ['本局用时', formatDuration(elapsedMs()) + ' · ' + (moveLog.length || Math.max(0, g.moveNum - 1)) + ' 手'],
     ['被吃棋子', '红 ' + redCap + ' · 黑 ' + blackCap]
   ];
+  if (humanSide()) {
+    rows.push(['累计战绩', stats.wins + ' 胜 ' + stats.losses + ' 负 ' + stats.draws + ' 和 · 连胜 ' + stats.streak]);
+  }
   x.textAlign = 'left';
   rows.forEach(([k, v], i) => {
-    const y = 560 + i * 58;
+    const y = 548 + i * 54;
     x.fillStyle = '#958a7a';
     x.font = '22px ' + sans;
     x.fillText(k, 120, y);
@@ -1032,6 +1286,7 @@ function onResign() {
 
 function onRestart() {
   if (!g) return;
+  if (review) exitReview();
   openModal({
     title: '重开本局',
     body: isOnline() ? '重开会同步重置双方的棋盘，确定吗？' : '确定重开吗？当前进度将丢失。',
@@ -1051,6 +1306,38 @@ const ROOM_KEY = 'blind-xiangqi-room';
 
 function isOnline() {
   return !!online;
+}
+
+/** 把联机失败分成「网络到不了服务」与「配置/房间问题」，给出可操作提示 */
+function netErrorInfo(err) {
+  const raw = (err && err.message) || String(err || '');
+  const host = String(SUPABASE_URL || '').replace(/^https?:\/\//, '').replace(/\/.*$/, '') || '联机服务';
+  if (/Failed to fetch|Load failed|NetworkError|fetch failed|Network request failed|timed out|net::ERR/i.test(raw)) {
+    return {
+      title: '连不上联机服务',
+      body: '请求没能到达 ' + host + '，通常是当前网络或代理把它拦住了。\n'
+        + '1. 换手机流量、关闭代理或 VPN 后重试；\n'
+        + '2. 浏览器直接打开 https://' + host + '/rest/v1/rooms?select=code&limit=1，能返回 [] 说明网络通畅；\n'
+        + '3. 若长期被拦截，可换自定义域名或自建后端（见 README「联机后端」）。'
+    };
+  }
+  if (/401|403|apikey|JWT|permission denied/i.test(raw)) {
+    return {
+      title: '联机配置无效',
+      body: '联机服务拒绝了请求，常见原因是 anon key 失效或 rooms 表的 RLS 策略不对。\n'
+        + '请检查 assets/config.js 与 supabase/schema.sql 中的配置。'
+    };
+  }
+  if (/PGRST205|does not exist|relation|schema cache/i.test(raw)) {
+    return {
+      title: '联机表未就绪',
+      body: '服务端找不到 rooms 表或字段。\n请按 supabase/schema.sql 建表，并补齐 host_seen / guest_seen 列后重试。'
+    };
+  }
+  return {
+    title: '联机请求失败',
+    body: '原始错误：' + raw + '\n请稍后重试；若反复出现，可打开浏览器控制台查看请求状态。'
+  };
 }
 
 function loadRoom() {
@@ -1129,10 +1416,12 @@ function updatePresence(room) {
   }
   if (online.offline) {
     chip.textContent = '连接中断，重连中…';
+    chip.title = '点击查看联机诊断';
     chip.classList.remove('hidden', 'muted');
     chip.classList.add('warn');
     return;
   }
+  chip.title = '';
   chip.classList.remove('warn');
   if (online.presenceOff) {
     chip.classList.add('hidden');
@@ -1208,6 +1497,7 @@ async function pullRoom() {
     updatePresence(room);
   } catch (err) {
     if (!online) return;
+    online.lastErr = err;
     online.fail = (online.fail || 0) + 1;
     if (online.fail >= 3) {
       online.offline = true;
@@ -1276,7 +1566,7 @@ async function commitOnline() {
       }
       toast('局面已被对手更新，已同步');
     } catch (e2) {
-      toast('同步失败，请检查网络');
+      toast(netErrorInfo(e2).title + '，局面尚未同步', 'check');
     }
   } finally {
     if (online) {
@@ -1315,6 +1605,9 @@ function beginOnlineGame(room, color) {
     oppSeen: null
   };
   saveRoom(room.code, color);
+  statsRecorded = false;
+  resetFrames();
+  startClock();
   $('#setupView').classList.add('hidden');
   $('#gameView').classList.remove('hidden');
   setHeader('game');
@@ -1343,6 +1636,9 @@ function resetOnlineGame() {
   hideEnd();
   g = newGameState({ ...cfg, play: 'online' });
   g.cfg.play = 'online';
+  statsRecorded = false;
+  resetFrames();
+  startClock();
   rebuildPieces();
   markLayer.innerHTML = '';
   hintLayer.innerHTML = '';
@@ -1365,9 +1661,10 @@ async function onCreateRoom() {
     const room = await createRoom(encodeState(fresh));
     beginOnlineGame(room, 'red');
   } catch (err) {
+    const info = netErrorInfo(err);
     openModal({
-      title: '建房失败',
-      body: '创建房间时出错：\n' + err.message + '\n请稍后重试，或检查 assets/config.js 里的 Supabase 配置。',
+      title: info.title,
+      body: info.body,
       okText: '知道了',
       cancelText: ''
     });
@@ -1398,9 +1695,10 @@ async function joinByCode(raw) {
     leaveOnline();
     beginOnlineGame(room, color);
   } catch (err) {
+    const info = netErrorInfo(err);
     openModal({
-      title: '加入失败',
-      body: '加入房间时出错：\n' + err.message + '\n请检查房间码是否正确、网络是否可用。',
+      title: info.title,
+      body: info.body,
       okText: '知道了',
       cancelText: ''
     });
@@ -1419,6 +1717,46 @@ async function copyInviteLink() {
     openModal({ title: '邀请链接', body: url, okText: '知道了', cancelText: '' });
   }
 }
+
+/* ---------------- 添加到主屏幕 ---------------- */
+
+const INSTALL_KEY = 'blind-xiangqi-install-tip';
+
+function isStandalone() {
+  return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+    || navigator.standalone === true;
+}
+
+function setupInstallTip() {
+  const tip = $('#installTip');
+  if (!tip || isStandalone()) return;
+  try { if (localStorage.getItem(INSTALL_KEY) === 'off') return; } catch (e) { /* ignore */ }
+  const ua = navigator.userAgent;
+  const ios = /iPhone|iPad|iPod/.test(ua);
+  if (!ios && !/Android/.test(ua)) return;
+  $('#installHow').textContent = ios
+    ? '用 Safari「分享 → 添加到主屏幕」，像 App 一样打开'
+    : '浏览器菜单「添加到主屏幕」，断网也能玩';
+  tip.classList.remove('hidden');
+  $('#installClose').addEventListener('click', () => {
+    tip.classList.add('hidden');
+    try { localStorage.setItem(INSTALL_KEY, 'off'); } catch (e) { /* ignore */ }
+  });
+  $('#installBtn').addEventListener('click', async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    try { await installPrompt.userChoice; } catch (e) { /* 用户取消 */ }
+    installPrompt = null;
+    $('#installBtn').classList.add('hidden');
+  });
+}
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  installPrompt = e;
+  const btn = $('#installBtn');
+  if (btn) btn.classList.remove('hidden');
+});
 
 /* ---------------- 交互绑定 ---------------- */
 
@@ -1512,6 +1850,11 @@ function bind() {
     if (e.key === 'Enter') joinByCode($('#roomInput').value);
   });
   $('#copyLinkBtn').addEventListener('click', copyInviteLink);
+  $('#presenceChip').addEventListener('click', () => {
+    if (!online || !online.offline) return;
+    const info = netErrorInfo(online.lastErr || new Error('Failed to fetch'));
+    openModal({ title: '联机诊断', body: info.body, okText: '知道了', cancelText: '' });
+  });
   $('#cancelRoomBtn').addEventListener('click', toSetup);
   $('#helpBtn').addEventListener('click', () => {
     openModal({ title: '玩法速览', body: HELP_TEXT, okText: '知道了', cancelText: '' });
@@ -1526,6 +1869,11 @@ function bind() {
     sfx('select');
   });
   $('#shareBtn').addEventListener('click', saveShareCard);
+  $('#replayBtn').addEventListener('click', startReview);
+  $('#revPrev').addEventListener('click', () => { stopReplay(); showFrame(review ? review.idx - 1 : 0); });
+  $('#revNext').addEventListener('click', () => { stopReplay(); showFrame(review ? review.idx + 1 : 0); });
+  $('#revPlay').addEventListener('click', toggleReplay);
+  $('#revExit').addEventListener('click', exitReview);
   $('#logBtn').addEventListener('click', showMoveLog);
   $('#logBtnEnd').addEventListener('click', showMoveLog);
   $('#vibBtn').addEventListener('click', () => {
@@ -1547,12 +1895,15 @@ function bind() {
   });
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !$('#modal').classList.contains('hidden')) closeModal();
+    else if (e.key === 'Escape' && review) exitReview();
   });
   window.addEventListener('resize', fitBoard);
 }
 
 buildGrid();
 renderOpts();
+renderStats();
+setupInstallTip();
 syncVibBtn();
 syncSoundBtn();
 bind();

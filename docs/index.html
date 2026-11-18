@@ -6,7 +6,11 @@
 <title>盲下象棋 · 打开即玩</title>
 <meta name="description" content="标准象棋盘，开局暗置洗牌，走完才翻开。一半棋艺，一半运气。无需安装，打开网页即可对弈。" />
 <meta name="theme-color" content="#efe7d8" />
+<link rel="canonical" href="https://ink-rui.github.io/blind-xiangqi-mp/" />
 <meta property="og:title" content="盲下象棋 · 打开即玩" />
+<meta property="og:url" content="https://ink-rui.github.io/blind-xiangqi-mp/" />
+<meta property="og:site_name" content="盲下象棋" />
+<meta property="og:locale" content="zh_CN" />
 <meta property="og:description" content="标准象棋盘，开局暗置洗牌，走完才翻开。一半棋艺，一半运气。" />
 <meta property="og:type" content="website" />
 <meta property="og:image" content="https://ink-rui.github.io/blind-xiangqi-mp/assets/og.png" />
@@ -19,6 +23,19 @@
 <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png" />
 <link rel="manifest" href="./manifest.webmanifest" />
 <link rel="stylesheet" href="./assets/style.css" />
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebApplication",
+  "name": "盲下象棋",
+  "url": "https://ink-rui.github.io/blind-xiangqi-mp/",
+  "applicationCategory": "GameApplication",
+  "operatingSystem": "Any",
+  "inLanguage": "zh-CN",
+  "description": "标准象棋盘，开局暗置洗牌，走完才翻开。支持 AI 陪练、双人同屏与联机对战，打开网页即可对弈。",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "CNY" }
+}
+</script>
 </head>
 <body>
 <div class="app">
@@ -92,6 +109,11 @@
     </section>
 
     <section class="panel guide">
+      <div class="stats-card">
+        <div class="stats-head"><b>我的战绩</b><span id="statsSub">AI 与联机对局计入</span></div>
+        <div class="stats-nums" id="statsNums"></div>
+        <ol class="stats-recent" id="statsRecent"></ol>
+      </div>
       <h2 class="panel-title">怎么玩</h2>
       <ol class="steps">
         <li><b>棋子暗置</b><span>开局除将帅外全部背面朝上，按所选模式随机摆放。</span></li>
@@ -104,6 +126,15 @@
       </ol>
       <p class="fineprint">规则引擎开源在 GitHub；当前只维护网页版，小程序版本为历史产物。</p>
     </section>
+
+    <div id="installTip" class="install-tip hidden">
+      <div class="install-text">
+        <b>添加到主屏幕</b>
+        <span id="installHow">像 App 一样打开，断网也能玩</span>
+      </div>
+      <button type="button" id="installBtn" class="mini-btn hidden">安装</button>
+      <button type="button" id="installClose" class="mini-btn">知道了</button>
+    </div>
   </main>
 
   <main id="gameView" class="game hidden">
@@ -122,6 +153,7 @@
       <span id="turnChip" class="turn-chip red">红方行棋</span>
       <span id="modeChip" class="chip">A1 半盘内洗</span>
       <span id="moveChip" class="chip">第 1 手</span>
+      <span id="timeChip" class="chip">用时 0:00</span>
       <span id="noCapChip" class="chip">无吃子 0/120</span>
       <span class="grow"></span>
       <button type="button" id="undoBtn" class="pill">悔棋</button>
@@ -154,15 +186,25 @@
             <p class="end-kicker">对局结束</p>
             <h2 id="endTitle" class="end-title">红方胜</h2>
             <p id="endReason" class="end-reason"></p>
+            <p id="endStats" class="end-stats"></p>
             <div class="end-actions">
               <button type="button" id="againBtn" class="big">再来一局</button>
               <button type="button" id="shareBtn" class="big gray">保存战绩图</button>
+              <button type="button" id="replayBtn" class="big gray">回放本局</button>
               <button type="button" id="logBtnEnd" class="big gray">查看棋谱</button>
               <button type="button" id="toSetupBtn" class="big gray">返回设置</button>
             </div>
           </div>
         </div>
       </div>
+    </div>
+
+    <div id="replayBar" class="replay-bar hidden" role="group" aria-label="回放控制">
+      <button type="button" id="revPrev" class="pill">上一步</button>
+      <button type="button" id="revPlay" class="pill accent">播放</button>
+      <button type="button" id="revNext" class="pill">下一步</button>
+      <span id="revLabel" class="rev-label">开局</span>
+      <button type="button" id="revExit" class="pill">退出回放</button>
     </div>
 
     <div class="trays">

@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://ink-rui.github.io/blind-xiangqi-mp/sitemap.xml
